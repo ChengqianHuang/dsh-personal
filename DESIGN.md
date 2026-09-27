@@ -2,6 +2,19 @@
 
 个人助理 bundle：SQLite 是 source of truth，LLM 只负责理解/分类/抽取/总结，永远不碰 SQL。
 
+## 经历模型（experiences）
+
+"看了一部/读了一本/听了一张/看了一场" 统一为 `experiences` 表：`category`（对象类别，开放词表）× `action`（动作，开放词表）× `title`（对象名）× `occurred_on`（发生日期）。新增一种经历类别不需要改代码、加表或迁移——只要说出对应的 category/action。
+
+归一化规则（有测试锁定）：
+
+- 写入：`trim + lowercase + 空白折叠`，存储为规范词元（`Movie` → `movie`）。
+- 查询：同样归一后做受控单复数展开（`movies` → `{movies, movie}`；`series` → `{series, serie}`，多余变体不命中）。
+- `occurred_on` 拒绝未来日期：未来要做的事是 task（`create_task`），不是经历。
+- 评分 0–10 有限小数，端到端 REAL 存储。
+
+schema 版本 3。旧 v1/v2 数据库（movie 中心模型）在打开时明确拒绝并给出重建指引——刻意不写 movies→experiences 的数据迁移。
+
 ## 架构
 
 ```

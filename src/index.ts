@@ -1,6 +1,6 @@
 /**
- * `@deepseek-ai/dsh-personal`: the personal assistant plugin. It owns one
- * SQLite database of structured personal data (movies, projects, project
+ * `dsh-personal`: the personal assistant plugin. It owns one
+ * SQLite database of structured personal data (experiences, projects, project
  * logs, tasks, blog posts, websites, ideas, daily logs, relations), exposes
  * deterministic operations through `ctx.personal`, and registers model-facing
  * capture, query, and review tools. The plugin is self-contained: disabling
@@ -29,7 +29,8 @@ import { buildDailyReview, buildWeeklyReview, type ReviewStores } from './review
 import { BlogPostStore } from './store/blogs.ts'
 import { mintId } from './store/ids.ts'
 import { DailyLogStore, IdeaStore } from './store/ideas.ts'
-import { MovieStore } from './store/movies.ts'
+import { ExperienceStore } from './store/experiences.ts'
+import { normalizeLimit, nowIso, withTransaction } from './store/statements.ts'
 import { openPersonalDatabase } from './store/open.ts'
 import { ProjectLogStore, ProjectStore } from './store/projects.ts'
 import { RelationStore } from './store/relations.ts'
@@ -48,12 +49,12 @@ import type {
   DailyLogId,
   DailyLogRow,
   DailyReview,
+  ExperienceFilter,
+  ExperienceId,
+  ExperienceRow,
   IdeaFilter,
   IdeaId,
   IdeaRow,
-  MovieFilter,
-  MovieId,
-  MovieRow,
   PersonalObjectType,
   ProjectId,
   ProjectLogFilter,
@@ -61,7 +62,7 @@ import type {
   ProjectLogRow,
   ProjectRow,
   RecordDailyLogInput,
-  RecordMovieInput,
+  RecordExperienceInput,
   RecordProjectLogInput,
   RegisterWebsiteInput,
   RelationRow,
@@ -80,6 +81,9 @@ import type {
 
 /** Initialized store bundle the service reads and writes through. */
 interface StoreBundle extends ReviewStores {
+  /** The connection every store shares; transactions run on it. */
+  db: DatabaseSync
+  experiences: ExperienceStore
   relations: RelationStore
 }
 
@@ -136,21 +140,29 @@ export class PersonalService extends Service {
       return Promise.reject(new Error('dsh-personal: service is disposed'))
     }
     if (this.stores !== undefined) return Promise.resolve(this.stores)
-    this.opening ??= openPersonalDatabase(this.settings.databasePath).then((db) => {
-      this.db = db
-      this.stores = {
-        movies: new MovieStore(db, this.settings.timeZone),
-        projects: new ProjectStore(db),
-        projectLogs: new ProjectLogStore(db, this.settings.timeZone),
-        tasks: new TaskStore(db, this.settings.timeZone),
-        blogPosts: new BlogPostStore(db),
-        websites: new WebsiteStore(db),
-        ideas: new IdeaStore(db),
-        dailyLogs: new DailyLogStore(db, this.settings.timeZone),
-        relations: new RelationStore(db),
-      }
-      return this.stores
-    })
+    // A failed open clears the shared attempt, so the next call retries with
+    // a fresh error instead of replaying the cached rejection forever.
+    this.opening ??= openPersonalDatabase(this.settings.databasePath)
+      .then((db) => {
+        this.db = db
+        this.stores = {
+          db,
+          experiences: new ExperienceStore(db, this.settings.timeZone),
+          projects: new ProjectStore(db),
+          projectLogs: new ProjectLogStore(db, this.settings.timeZone),
+          tasks: new TaskStore(db, this.settings.timeZone),
+          blogPosts: new BlogPostStore(db),
+          websites: new WebsiteStore(db),
+          ideas: new IdeaStore(db),
+          dailyLogs: new DailyLogStore(db, this.settings.timeZone),
+          relations: new RelationStore(db),
+        }
+        return this.stores
+      })
+      .catch((error: unknown) => {
+        this.opening = undefined
+        throw error
+      })
     return this.opening
   }
 
@@ -182,19 +194,25 @@ export class PersonalService extends Service {
    * @param input - capture payload; `watchedAt` defaults to today.
    * @returns the stored movie row.
    */
-  async recordMovie(input: RecordMovieInput): Promise<MovieRow> {
-    const { movies } = await this.ready()
-    const id = mintId('movie') as MovieId
-    movies.insert({
+  async recordExperience(input: RecordExperienceInput): Promise<ExperienceRow> {
+    const { experiences } = await this.ready()
+    const id = mintId('exp') as ExperienceId
+    const occurredOn = input.occurredOn === undefined ? this.today() : assertIsoDate(input.occurredOn, 'occurredOn')
+    if (occurredOn > this.today()) {
+      throw new Error('dsh-personal: occurredOn must not be in the future; planned items belong in create_task')
+    }
+    experiences.insert({
       id,
-      title: this.required(input.title, 'movie title'),
-      watchedAt: input.watchedAt === undefined ? this.today() : assertIsoDate(input.watchedAt, 'watchedAt'),
+      category: input.category,
+      action: input.action,
+      title: this.required(input.title, 'experience title'),
+      occurredOn,
       rating: input.rating === undefined ? null : normalizeRating(input.rating),
       note: this.optional(input.note),
       tags: this.tagList(input.tags),
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
-    return requireRow(movies.get(id), 'dsh-personal: movie insert lost')
+    return requireRow(experiences.get(id), 'dsh-personal: experience insert lost')
   }
 
   /**
@@ -204,19 +222,8 @@ export class PersonalService extends Service {
    * @throws on a duplicate project name.
    */
   async createProject(input: CreateProjectInput): Promise<ProjectRow> {
-    const { projects } = await this.ready()
-    const name = this.required(input.name, 'project name')
-    if (projects.getByName(name) !== undefined) {
-      throw new Error(`dsh-personal: project ${JSON.stringify(name)} already exists`)
-    }
-    projects.insert({
-      id: mintId('project'),
-      name,
-      description: this.optional(input.description),
-      status: input.status ?? 'ACTIVE',
-      createdAt: nowStamp(),
-    })
-    return requireRow(projects.getByName(name), 'dsh-personal: project insert lost')
+    const bundle = await this.ready()
+    return withTransaction(bundle.db, () => this.createProjectIn(bundle, input))
   }
 
   /**
@@ -225,21 +232,53 @@ export class PersonalService extends Service {
    * @returns the project, or undefined when nothing matches.
    */
   async findProject(ref: string): Promise<ProjectRow | undefined> {
-    const { projects } = await this.ready()
-    const trimmed = ref.trim()
-    if (trimmed.length === 0) return undefined
-    const byId = projects.get(trimmed as ProjectId)
-    if (byId !== undefined) return byId
-    const byName = projects.getByName(trimmed)
-    if (byName !== undefined) return byName
-    return projects.list().find(project => project.name.toLowerCase() === trimmed.toLowerCase())
+    const bundle = await this.ready()
+    return this.findProjectIn(bundle, ref)
   }
 
-  /** Resolve a required project reference or throw. */
-  private async resolveProjectRef(ref: string): Promise<ProjectRow> {
-    const project = await this.findProject(ref)
+  /**
+   * Resolve a required project reference or throw.
+   * @param ref - project id or name.
+   * @returns the resolved project.
+   * @throws when nothing matches.
+   */
+  async resolveProject(ref: string): Promise<ProjectRow> {
+    const bundle = await this.ready()
+    return this.resolveProjectIn(bundle, ref)
+  }
+
+  /** Synchronous lookup over an initialized bundle; no awaits inside transactions. */
+  private findProjectIn(bundle: StoreBundle, ref: string): ProjectRow | undefined {
+    const trimmed = ref.trim()
+    if (trimmed.length === 0) return undefined
+    const byId = bundle.projects.get(trimmed as ProjectId)
+    if (byId !== undefined) return byId
+    const byName = bundle.projects.getByName(trimmed)
+    if (byName !== undefined) return byName
+    return bundle.projects.list().find(project => project.name.toLowerCase() === trimmed.toLowerCase())
+  }
+
+  /** Synchronous required lookup; the caller surfaces the failure to the model. */
+  private resolveProjectIn(bundle: StoreBundle, ref: string): ProjectRow {
+    const project = this.findProjectIn(bundle, ref)
     if (project === undefined) throw new Error(`dsh-personal: unknown project ${JSON.stringify(ref.trim())}`)
     return project
+  }
+
+  /** Synchronous create with the duplicate-name check; caller owns the transaction. */
+  private createProjectIn(bundle: StoreBundle, input: CreateProjectInput): ProjectRow {
+    const name = this.required(input.name, 'project name')
+    if (bundle.projects.getByName(name) !== undefined) {
+      throw new Error(`dsh-personal: project ${JSON.stringify(name)} already exists`)
+    }
+    bundle.projects.insert({
+      id: mintId('project'),
+      name,
+      description: this.optional(input.description),
+      status: input.status ?? 'ACTIVE',
+      createdAt: nowIso(),
+    })
+    return requireRow(bundle.projects.getByName(name), 'dsh-personal: project insert lost')
   }
 
   /**
@@ -251,35 +290,36 @@ export class PersonalService extends Service {
    */
   async recordProjectLog(input: RecordProjectLogInput): Promise<{ project: ProjectRow; log: ProjectLogRow }> {
     const bundle = await this.ready()
-    const project = await this.findProject(input.project)
-      ?? await this.createProject({ name: input.project })
-    const id = mintId('plog') as ProjectLogId
-    bundle.projectLogs.insert({
-      id,
-      projectId: project.id,
-      date: input.date === undefined ? this.today() : assertIsoDate(input.date, 'date'),
-      title: this.required(input.title, 'log title'),
-      content: this.optional(input.content),
-      status: input.status ?? 'DONE',
-      tags: this.tagList(input.tags),
-      createdAt: nowStamp(),
+    return withTransaction(bundle.db, () => {
+      const project = this.findProjectIn(bundle, input.project)
+        ?? this.createProjectIn(bundle, { name: input.project })
+      const id = mintId('plog') as ProjectLogId
+      bundle.projectLogs.insert({
+        id,
+        projectId: project.id,
+        date: input.date === undefined ? this.today() : assertIsoDate(input.date, 'date'),
+        title: this.required(input.title, 'log title'),
+        content: this.optional(input.content),
+        status: input.status ?? 'DONE',
+        tags: this.tagList(input.tags),
+        createdAt: nowIso(),
+      })
+      bundle.projects.touch(project.id)
+      return { project, log: requireRow(bundle.projectLogs.get(id), 'dsh-personal: project log insert lost') }
     })
-    bundle.projects.touch(project.id)
-    bundle.relations.link({ type: 'project_log', id }, 'belongs-to', { type: 'project', id: project.id })
-    return { project, log: requireRow(bundle.projectLogs.get(id), 'dsh-personal: project log insert lost') }
   }
 
   /**
    * Create one task. Explicit `dueAt` wins over `dueIn`; project and website
-   * references resolve by id, exact name, domain, or case-insensitive name,
-   * and each resolved link is also recorded as a relation.
+   * references resolve by id, exact name, domain, or case-insensitive name.
+   * Links live in the task's foreign-key columns, not in the relations table.
    * @param input - creation payload.
    * @returns the stored task row.
    */
   async createTask(input: CreateTaskInput): Promise<TaskRow> {
     const bundle = await this.ready()
-    const project = input.project !== undefined ? await this.resolveProjectRef(input.project) : undefined
-    const website = input.website !== undefined ? await this.resolveWebsiteRef(input.website) : undefined
+    const project = input.project !== undefined ? this.resolveProjectIn(bundle, input.project) : undefined
+    const website = input.website !== undefined ? this.resolveWebsiteIn(bundle, input.website) : undefined
     const id = mintId('task') as TaskId
     const sourceType = this.optional(input.sourceType)
     const sourceId = this.optional(input.sourceId)
@@ -295,14 +335,8 @@ export class PersonalService extends Service {
       websiteId: website?.id ?? null,
       sourceType: sourceType.length > 0 ? sourceType : null,
       sourceId: sourceId.length > 0 ? sourceId : null,
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
-    if (project !== undefined) {
-      bundle.relations.link({ type: 'task', id }, 'belongs-to', { type: 'project', id: project.id })
-    }
-    if (website !== undefined) {
-      bundle.relations.link({ type: 'task', id }, 'maintains', { type: 'website', id: website.id })
-    }
     return requireRow(bundle.tasks.get(id), 'dsh-personal: task insert lost')
   }
 
@@ -347,7 +381,7 @@ export class PersonalService extends Service {
   async createBlogPost(input: CreateBlogPostInput): Promise<BlogPostRow> {
     const bundle = await this.ready()
     const project = input.relatedProject !== undefined
-      ? await this.resolveProjectRef(input.relatedProject)
+      ? this.resolveProjectIn(bundle, input.relatedProject)
       : undefined
     const id = mintId('blog') as BlogPostId
     bundle.blogPosts.insert({
@@ -358,11 +392,8 @@ export class PersonalService extends Service {
       content: this.optional(input.content),
       tags: this.tagList(input.tags),
       relatedProjectId: project?.id ?? null,
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
-    if (project !== undefined) {
-      bundle.relations.link({ type: 'blog_post', id }, 'belongs-to', { type: 'project', id: project.id })
-    }
     return requireRow(bundle.blogPosts.get(id), 'dsh-personal: blog post insert lost')
   }
 
@@ -394,7 +425,7 @@ export class PersonalService extends Service {
   async createIdea(input: CreateIdeaInput): Promise<IdeaRow> {
     const bundle = await this.ready()
     const project = input.relatedProject !== undefined
-      ? await this.resolveProjectRef(input.relatedProject)
+      ? this.resolveProjectIn(bundle, input.relatedProject)
       : undefined
     const id = mintId('idea') as IdeaId
     bundle.ideas.insert({
@@ -403,11 +434,8 @@ export class PersonalService extends Service {
       content: this.optional(input.content),
       category: this.optional(input.category),
       relatedProjectId: project?.id ?? null,
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
-    if (project !== undefined) {
-      bundle.relations.link({ type: 'idea', id }, 'belongs-to', { type: 'project', id: project.id })
-    }
     return requireRow(bundle.ideas.get(id), 'dsh-personal: idea insert lost')
   }
 
@@ -424,7 +452,7 @@ export class PersonalService extends Service {
       date: input.date === undefined ? this.today() : assertIsoDate(input.date, 'date'),
       summary: this.required(input.summary, 'daily summary'),
       rawText: this.optional(input.rawText),
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
     return requireRow(dailyLogs.get(id), 'dsh-personal: daily log insert lost')
   }
@@ -449,7 +477,7 @@ export class PersonalService extends Service {
       hosting: this.optional(input.hosting),
       description: this.optional(input.description),
       tags: this.tagList(input.tags),
-      createdAt: nowStamp(),
+      createdAt: nowIso(),
     })
     return requireRow(websites.getByDomain(domain), 'dsh-personal: website insert lost')
   }
@@ -461,21 +489,37 @@ export class PersonalService extends Service {
    * @returns the website, or undefined when nothing matches.
    */
   async findWebsite(ref: string): Promise<WebsiteRow | undefined> {
-    const { websites } = await this.ready()
+    const bundle = await this.ready()
+    return this.findWebsiteIn(bundle, ref)
+  }
+
+  /**
+   * Resolve a required website reference or throw.
+   * @param ref - website id, domain, or name.
+   * @returns the resolved website.
+   * @throws when nothing matches.
+   */
+  async resolveWebsite(ref: string): Promise<WebsiteRow> {
+    const bundle = await this.ready()
+    return this.resolveWebsiteIn(bundle, ref)
+  }
+
+  /** Synchronous lookup over an initialized bundle; no awaits inside transactions. */
+  private findWebsiteIn(bundle: StoreBundle, ref: string): WebsiteRow | undefined {
     const trimmed = ref.trim()
     if (trimmed.length === 0) return undefined
-    const byId = websites.get(trimmed as WebsiteId)
+    const byId = bundle.websites.get(trimmed as WebsiteId)
     if (byId !== undefined) return byId
-    const byDomain = websites.getByDomain(trimmed)
+    const byDomain = bundle.websites.getByDomain(trimmed)
     if (byDomain !== undefined) return byDomain
     const lower = trimmed.toLowerCase()
-    return websites.list({ limit: 200 }).find(website =>
+    return bundle.websites.list({ limit: 200 }).find(website =>
       website.name.toLowerCase() === lower || website.domain.toLowerCase() === lower)
   }
 
-  /** Resolve a required website reference or throw. */
-  private async resolveWebsiteRef(ref: string): Promise<WebsiteRow> {
-    const website = await this.findWebsite(ref)
+  /** Synchronous required lookup; the caller surfaces the failure to the model. */
+  private resolveWebsiteIn(bundle: StoreBundle, ref: string): WebsiteRow {
+    const website = this.findWebsiteIn(bundle, ref)
     if (website === undefined) throw new Error(`dsh-personal: unknown website ${JSON.stringify(ref.trim())}`)
     return website
   }
@@ -497,12 +541,13 @@ export class PersonalService extends Service {
   }
 
   /**
- * Query movies by watch-date window and tag.
+ * Query experiences by category, action, occurred-date window, and tag.
+ * Category and action accept singular or plural query words.
  * @param filter - query filter.
  * @returns the matching rows.
  */
-  async queryMovies(filter: MovieFilter): Promise<MovieRow[]> {
-    return (await this.ready()).movies.list(filter)
+  async queryExperiences(filter: ExperienceFilter): Promise<ExperienceRow[]> {
+    return (await this.ready()).experiences.list(filter)
   }
 
   /**
@@ -522,11 +567,12 @@ export class PersonalService extends Service {
   async queryProjectLogs(
     filter: ProjectLogFilter & { projectId?: ProjectId },
   ): Promise<ProjectLogRow[]> {
+    const bundle = await this.ready()
     const { project, projectId, ...rest } = filter
     const resolvedProjectId = project !== undefined
-      ? (await this.resolveProjectRef(project)).id
+      ? this.resolveProjectIn(bundle, project).id
       : projectId
-    return (await this.ready()).projectLogs.list({
+    return bundle.projectLogs.list({
       ...rest,
       ...(resolvedProjectId !== undefined ? { projectId: resolvedProjectId } : {}),
     })
@@ -578,7 +624,7 @@ export class PersonalService extends Service {
     const bundle = await this.ready()
     const win = resolveWindow(input, this.settings.timeZone)
     const text = this.required(input.text, 'search text')
-    const limit = normalizeSearchLimit(input.limit)
+    const limit = normalizeLimit(input.limit)
     const wanted = (type: PersonalObjectType): boolean => input.types === undefined || input.types.includes(type)
     const result: SearchPersonalResult = {}
     const include = (type: PersonalObjectType, rows: unknown[]): void => {
@@ -586,7 +632,7 @@ export class PersonalService extends Service {
       // is JSON-safe by construction.
       if (wanted(type) && rows.length > 0) result[type] = rows as JsonValue[]
     }
-    include('movie', bundle.movies.searchText(text, win, limit))
+    include('experience', bundle.experiences.searchText(text, win, limit))
     include('project', bundle.projects.searchText(text, limit))
     include('project_log', bundle.projectLogs.searchText(text, win, limit))
     include('task', bundle.tasks.searchText(text, win, limit))
@@ -643,11 +689,6 @@ export class PersonalService extends Service {
   }
 }
 
-/** Current durable timestamp. */
-function nowStamp(): string {
-  return new Date().toISOString()
-}
-
 /** Rating bounds enforced ahead of the SQL CHECK; any finite decimal stores. */
 function normalizeRating(rating: number): number {
   if (!Number.isFinite(rating) || rating < 0 || rating > 10) {
@@ -667,11 +708,3 @@ function requireRow<T>(row: T | undefined, message: string): T {
   return row
 }
 
-/** Search row cap shared across types. */
-function normalizeSearchLimit(limit: number | undefined): number {
-  if (limit === undefined) return 20
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
-    throw new Error(`dsh-personal: limit must be an integer 1-200, got ${String(limit)}`)
-  }
-  return limit
-}

@@ -21,14 +21,14 @@ import {
   blogPostRowSchema,
   dateParam,
   dailyLogRowSchema,
+  experienceRowSchema,
   ideaRowSchema,
-  movieRowSchema,
   projectLogRowSchema,
   projectRowSchema,
   renderBlogPost,
   renderDailyLog,
+  renderExperience,
   renderIdea,
-  renderMovie,
   renderProject,
   renderProjectLog,
   renderTask,
@@ -43,39 +43,52 @@ import {
  * @returns the tool definitions for registration.
  */
 export function createWriteTools(service: PersonalService): ToolDefinition[] {
-  const recordMovie = defineTool({
-    name: 'record_movie',
+  const recordExperience = defineTool({
+    name: 'record_experience',
     description:
-      'Record a movie the user watched. The user may mention a rating (0-10), a note, tags, '
-      + 'or a watch date; pass exactly what was said and omit the rest — the watch date '
-      + 'defaults to today.',
+      'Record something the user already experienced: a movie watched, a book read, an album '
+      + 'listened to, an exhibition visited. category and action are lowercase singular words '
+      + '(category: movie, book, album, exhibition, ...; action: watched, read, listened, '
+      + 'visited, ...). Only for things that already happened — planned items go to '
+      + 'create_task. occurred_on defaults to today; pass exactly what the user said and '
+      + 'omit the rest.',
     parameters: {
-      title: { type: 'string', required: true, description: 'Movie title as the user names it.' },
+      category: {
+        type: 'string',
+        required: true,
+        description: 'What kind of thing, lowercase singular: movie, book, album, exhibition, ...',
+      },
+      action: {
+        type: 'string',
+        required: true,
+        description: 'What was done, lowercase singular: watched, read, listened, visited, ...',
+      },
+      title: { type: 'string', required: true, description: 'Name of the experienced thing, e.g. the movie or book title.' },
       rating: { type: 'number', description: 'User rating 0-10; decimals like 7.5 are stored as given.' },
-      watched_at: dateParam('Watch date'),
-      note: { type: 'string', description: 'Optional short note about the movie.' },
+      occurred_on: dateParam('Experience date'),
+      note: { type: 'string', description: 'Optional short note.' },
       tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags.' },
     },
     output: {
       schema: {
         type: 'object',
         additionalProperties: false,
-        properties: { movie: { ...movieRowSchema, required: true } },
+        properties: { experience: { ...experienceRowSchema, required: true } },
       },
-      render: (_args, value) => textBlock(`Recorded movie: ${renderMovie(value.movie)}`),
+      render: (_args, value) => textBlock(`Recorded experience: ${renderExperience(value.experience)}`),
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      const { watched_at, ...rest } = args
+      const { occurred_on, ...rest } = args
       return {
-        movie: await service.recordMovie({
+        experience: await service.recordExperience({
           ...rest,
-          ...(watched_at !== undefined ? { watchedAt: watched_at } : {}),
+          ...(occurred_on !== undefined ? { occurredOn: occurred_on } : {}),
         }),
       }
     },
-    presentCall: args => ({ card: 'generic', title: 'Record movie', kind: 'other', rawInput: args.title }),
+    presentCall: args => ({ card: 'generic', title: 'Record experience', kind: 'other', rawInput: args.title }),
   })
 
   const createProject = defineTool({
@@ -416,7 +429,7 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
   })
 
   return [
-    recordMovie,
+    recordExperience,
     createProject,
     recordProjectLog,
     createTask,

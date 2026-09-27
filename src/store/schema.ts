@@ -3,20 +3,23 @@
  * monotonic migration runner. `PRAGMA user_version` is the schema version;
  * every migration applies once inside a transaction that also stamps its
  * version, so an interrupted migration leaves the previous version intact.
- * @module @deepseek-ai/dsh-personal/store/schema
+ * @module dsh-personal/store/schema
  */
 
 import type { DatabaseSync } from 'node:sqlite'
 
 /**
  * Current personal schema version. Bump by appending a migration; any on-disk
- * version greater than this rejects — a database written by a newer build.
+ * version that is not `0` (fresh) or the current version is rejected —
+ * intermediate versions carry no automatic data migration.
  *
- * 1 — initial tables (movies.rating INTEGER).
- * 2 — rebuild `movies` with a REAL rating: real-use review showed half-point
- *     scores ("7.5 分") truncated to integers end to end.
+ * 1–2 — earlier movie-centric schemas; databases stamped with them are
+ *       rejected at open with rebuild instructions (the experiences model
+ *       intentionally does not migrate the old `movies` table).
+ * 3   — the experiences model: `movies` is replaced by an open
+ *       `experiences` table (category × action), relation types updated.
  */
-export const PERSONAL_SCHEMA_VERSION = 2
+export const PERSONAL_SCHEMA_VERSION = 3
 
 /**
  * SQLite `application_id` fingerprint (`PERS`) marking a database as owned by
@@ -35,7 +38,7 @@ export interface PersonalMigration {
 /** Ordered migration list; every version above the on-disk version applies. */
 export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
   {
-    version: 1,
+    version: 3,
     up(db) {
       db.exec(`
         CREATE TABLE projects (
@@ -61,18 +64,20 @@ export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
         ) STRICT
       `)
       db.exec(`
-        CREATE TABLE movies (
-          id         TEXT PRIMARY KEY,
-          title      TEXT NOT NULL,
-          watched_at TEXT NOT NULL,
-          rating     INTEGER CHECK (rating IS NULL OR (rating >= 0 AND rating <= 10)),
-          note       TEXT NOT NULL DEFAULT '',
-          tags       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+        CREATE TABLE experiences (
+          id          TEXT PRIMARY KEY,
+          category    TEXT NOT NULL,
+          action      TEXT NOT NULL,
+          title       TEXT NOT NULL,
+          occurred_on TEXT NOT NULL,
+          rating      REAL CHECK (rating IS NULL OR (rating >= 0 AND rating <= 10)),
+          note        TEXT NOT NULL DEFAULT '',
+          tags        TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+          created_at  TEXT NOT NULL
         ) STRICT
       `)
-      db.exec('CREATE INDEX movies_watched_at ON movies (watched_at)')
+      db.exec('CREATE INDEX experiences_category_date ON experiences (category, occurred_on)')
+      db.exec('CREATE INDEX experiences_occurred_on ON experiences (occurred_on)')
       db.exec(`
         CREATE TABLE project_logs (
           id         TEXT PRIMARY KEY,
@@ -144,11 +149,11 @@ export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
         CREATE TABLE relations (
           id            TEXT PRIMARY KEY,
           from_type     TEXT NOT NULL CHECK (from_type IN
-            ('movie', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log')),
+            ('experience', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log')),
           from_id       TEXT NOT NULL,
           relation_type TEXT NOT NULL,
           to_type       TEXT NOT NULL CHECK (to_type IN
-            ('movie', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log')),
+            ('experience', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log')),
           to_id         TEXT NOT NULL,
           created_at    TEXT NOT NULL,
           UNIQUE (from_type, from_id, relation_type, to_type, to_id)
@@ -158,40 +163,18 @@ export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
       db.exec('CREATE INDEX relations_to ON relations (to_type, to_id)')
     },
   },
-  {
-    version: 2,
-    up(db) {
-      // SQLite cannot alter a column type in place: rebuild the table and
-      // copy every row. `movies` is never the target of a foreign key, so
-      // dropping it breaks no reference.
-      db.exec(`
-        CREATE TABLE movies_v2 (
-          id         TEXT PRIMARY KEY,
-          title      TEXT NOT NULL,
-          watched_at TEXT NOT NULL,
-          rating     REAL CHECK (rating IS NULL OR (rating >= 0 AND rating <= 10)),
-          note       TEXT NOT NULL DEFAULT '',
-          tags       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        ) STRICT
-      `)
-      db.exec(
-        'INSERT INTO movies_v2 (id, title, watched_at, rating, note, tags, created_at, updated_at) '
-          + 'SELECT id, title, watched_at, rating, note, tags, created_at, updated_at FROM movies',
-      )
-      db.exec('DROP TABLE movies')
-      db.exec('ALTER TABLE movies_v2 RENAME TO movies')
-      db.exec('CREATE INDEX movies_watched_at ON movies (watched_at)')
-    },
-  },
 ]
 
-/** Versioned rejection when the on-disk schema is newer than this build. */
+/** Rejection when the on-disk schema cannot be opened by this build. */
 export class SchemaVersionError extends Error {
   constructor(path: string, onDisk: number, current: number) {
     super(
-      `dsh-personal: database at "${path}" has schema version ${onDisk}, newer than this build (${current})`,
+      onDisk > current
+        ? `dsh-personal: database at "${path}" has schema version ${onDisk}, newer than this build (${current}); ` +
+          'upgrade the plugin build and reopen.'
+        : `dsh-personal: database at "${path}" uses schema version ${onDisk}, created by an older build; ` +
+          `this build requires version ${current} (the experiences model has no data migration from older schemas). ` +
+          `Move or delete the database file and restart to create a fresh one.`,
     )
     this.name = 'SchemaVersionError'
   }
@@ -202,13 +185,20 @@ export class SchemaVersionError extends Error {
  * every pending migration in order. Each migration runs in one transaction
  * that also stamps its own version, so a failure rolls back to the previous
  * version and the next open retries the same migration.
+ *
+ * Databases stamped with a retired version (below the oldest migration in the
+ * list) are rejected with rebuild instructions instead of being silently
+ * misread or deleted.
  * @param db - the opened SQLite handle.
  * @param path - database path for error messages.
- * @throws {@link SchemaVersionError} when the database is from a newer build.
+ * @throws {@link SchemaVersionError} when the database is from a different,
+ * incompatible schema generation.
  */
 export function migratePersonalDatabase(db: DatabaseSync, path: string): void {
   const { user_version: onDisk } = db.prepare('PRAGMA user_version').get() as { user_version: number }
-  if (onDisk > PERSONAL_SCHEMA_VERSION) throw new SchemaVersionError(path, onDisk, PERSONAL_SCHEMA_VERSION)
+  if (onDisk !== 0 && onDisk !== PERSONAL_SCHEMA_VERSION) {
+    throw new SchemaVersionError(path, onDisk, PERSONAL_SCHEMA_VERSION)
+  }
   for (const migration of PERSONAL_MIGRATIONS) {
     if (migration.version <= onDisk) continue
     db.exec('BEGIN IMMEDIATE')

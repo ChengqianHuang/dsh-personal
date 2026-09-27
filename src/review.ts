@@ -7,16 +7,16 @@
 
 import { weekRangeOf } from './dates.ts'
 import type { DailyReview, ProjectId, ProjectLogRow, WeeklyReview } from './types.ts'
+import type { ExperienceStore } from './store/experiences.ts'
 import type { BlogPostStore } from './store/blogs.ts'
 import type { DailyLogStore, IdeaStore } from './store/ideas.ts'
-import type { MovieStore } from './store/movies.ts'
 import type { ProjectLogStore, ProjectStore } from './store/projects.ts'
 import type { TaskStore } from './store/tasks.ts'
 import type { WebsiteStore } from './store/websites.ts'
 
 /** Store bundle a review reads from; the service owns and closes them. */
 export interface ReviewStores {
-  movies: MovieStore
+  experiences: ExperienceStore
   projects: ProjectStore
   projectLogs: ProjectLogStore
   tasks: TaskStore
@@ -54,7 +54,7 @@ export function buildDailyReview(stores: ReviewStores, date: string): DailyRevie
     work,
     tasksDone: stores.tasks.listDoneOn(date),
     tasksOpen: stores.tasks.listOpen(),
-    movies: stores.movies.list({ from: date, to: date, limit: 200 }),
+    experiences: stores.experiences.list({ from: date, to: date, limit: 200 }),
     blogPosts: stores.blogPosts.listCreatedBetween({ from: date, to: date }),
     ideas: stores.ideas.listCreatedBetween({ from: date, to: date }),
     websites: openTasksByWebsite(stores),
@@ -78,7 +78,7 @@ export function buildWeeklyReview(stores: ReviewStores, anchor: string): WeeklyR
     activeProjects: stores.projects.list().filter(project => activeProjectIds.has(project.id)),
     tasksDone: stores.tasks.listDoneBetween(week),
     tasksOpen: stores.tasks.listOpen(),
-    movies: stores.movies.list({ from: week.from, to: week.to, limit: 200 }),
+    experiences: stores.experiences.list({ from: week.from, to: week.to, limit: 200 }),
     blogPosts: stores.blogPosts.listCreatedBetween(week),
     ideas: stores.ideas.listCreatedBetween(week),
     websites: openTasksByWebsite(stores),

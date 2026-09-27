@@ -22,7 +22,7 @@ afterEach(async () => {
 })
 
 const TOOL_NAMES = [
-  'record_movie',
+  'record_experience',
   'create_project',
   'record_project_log',
   'create_task',
@@ -33,7 +33,7 @@ const TOOL_NAMES = [
   'create_idea',
   'record_daily_log',
   'register_website',
-  'query_movies',
+  'query_experiences',
   'query_tasks',
   'query_project_logs',
   'query_blog_posts',
@@ -69,7 +69,7 @@ describe('tool schemas', () => {
     const { tools } = await serviceWithTools()
     const execCtx = exec()
     const samples: Record<string, Record<string, unknown>> = {
-      record_movie: { title: '灵媒', rating: 7, watched_at: '2026-09-26', tags: ['horror'] },
+      record_experience: { category: 'movie', action: 'watched', title: '灵媒', rating: 7, tags: ['horror'] },
       create_project: { name: 'Forge' },
       record_project_log: { project: 'Forge', title: '定位问题', status: 'DONE' },
       create_task: { title: '检查证书', due_in: 'next-week', website: 'blog.example.com' },
@@ -80,7 +80,7 @@ describe('tool schemas', () => {
       create_idea: { title: 'idea', category: 'product' },
       record_daily_log: { summary: '平静', date: '2026-09-26' },
       register_website: { name: 'Blog', domain: 'blog.example.com' },
-      query_movies: { period: 'this-month', limit: 10 },
+      query_experiences: { period: 'this-month', limit: 10 },
       query_tasks: { statuses: ['TODO', 'DOING'], due: 'overdue' },
       query_project_logs: { project: 'Forge', period: 'this-week' },
       query_blog_posts: { status: 'IDEA' },
@@ -104,8 +104,8 @@ describe('tool schemas', () => {
     const { tools } = await serviceWithTools()
     const byName = new Map(tools.map(tool => [tool.name, tool]))
     const invalid: Array<[string, Record<string, unknown>]> = [
-      ['record_movie', { rating: 7 }],
-      ['record_movie', { title: 'x', rating: 'seven' }],
+      ['record_experience', { action: 'watched', title: 'x' }],
+      ['record_experience', { title: 'x', rating: 'seven' }],
       ['complete_task', {}],
       ['create_task', { title: 'x', due_in: 'someday' }],
       ['search_personal_data', { types: ['sql_table'] }],
@@ -124,8 +124,8 @@ describe('tool execution', () => {
     const call = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> =>
       await (byName.get(name)!.execute as (args: unknown, exec: ToolRunContext) => Promise<Record<string, unknown>>)(args, exec())
 
-    const recorded = await call('record_movie', { title: '灵媒', rating: 7 })
-    expect((recorded.movie as { title: string }).title).toBe('灵媒')
+    const recorded = await call('record_experience', { category: 'movie', action: 'watched', title: '灵媒', rating: 7 })
+    expect((recorded.experience as { title: string }).title).toBe('灵媒')
 
     const logged = await call('record_project_log', { project: 'Forge', title: '定位问题' })
     expect(logged.projectCreated).toBe(true)
@@ -138,8 +138,8 @@ describe('tool execution', () => {
     const website = await call('register_website', { name: 'Blog', domain: 'blog.example.com' })
     const websiteId = (website.website as { id: string }).id
 
-    const movies = await call('query_movies', { period: 'this-month' })
-    expect(movies.count).toBe(1)
+    const experiences = await call('query_experiences', { period: 'this-month' })
+    expect(experiences.count).toBe(1)
 
     const search = await call('search_personal_data', { text: 'blog' })
     expect(Object.keys(search)).toContain('website')
@@ -155,11 +155,13 @@ describe('tool execution', () => {
 
   it('rejects an already-cancelled call', async () => {
     const { tools } = await serviceWithTools()
-    const recordMovie = tools.find(tool => tool.name === 'record_movie')!
+    const recordExperience = tools.find(tool => tool.name === 'record_experience')!
     const controller = new AbortController()
     controller.abort()
     const cancelled = { signal: controller.signal } as unknown as ToolRunContext
-    await expect(recordMovie.execute({ title: 'x' }, cancelled)).rejects.toThrow('cancelled')
+    await expect(
+      recordExperience.execute({ category: 'movie', action: 'watched', title: 'x' }, cancelled),
+    ).rejects.toThrow('cancelled')
   })
 
   it('surfaces unknown references as errors for the model', async () => {
@@ -178,7 +180,7 @@ describe('review rendering', () => {
       work: [{ project: { id: brandString<ProjectId>('p1'), name: 'Forge', description: '', status: 'ACTIVE', createdAt: '', updatedAt: '' }, logs: [{ id: brandString<ProjectLogId>('l1'), projectId: brandString<ProjectId>('p1'), date: today, title: '定位了问题', content: '', status: 'DONE', tags: [], createdAt: '' }] }],
       tasksDone: [{ id: brandString<TaskId>('t1'), title: 'ship', status: 'DONE', priority: 'HIGH', dueAt: null, projectId: null, websiteId: null, sourceType: null, sourceId: null, doneAt: today, createdAt: '', updatedAt: '' }],
       tasksOpen: [],
-      movies: [],
+      experiences: [],
       blogPosts: [],
       ideas: [],
       websites: [],
@@ -195,7 +197,7 @@ describe('review rendering', () => {
       work: [],
       tasksDone: [],
       tasksOpen: [],
-      movies: [],
+      experiences: [],
       blogPosts: [],
       ideas: [],
       websites: [],

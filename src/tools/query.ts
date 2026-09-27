@@ -20,12 +20,12 @@ import {
   blogPostRowSchema,
   describeWindow,
   limitParameter,
-  movieRowSchema,
+  experienceRowSchema,
   projectLogRowSchema,
   renderBlogPost,
   renderDailyLog,
   renderIdea,
-  renderMovie,
+  renderExperience,
   renderProject,
   renderProjectLog,
   renderTask,
@@ -42,10 +42,15 @@ import {
  * @returns the tool definitions for registration.
  */
 export function createQueryTools(service: PersonalService): ToolDefinition[] {
-  const queryMovies = defineTool({
-    name: 'query_movies',
-    description: 'List movies the user watched, newest first. Filter by watch-date window or tag.',
+  const queryExperiences = defineTool({
+    name: 'query_experiences',
+    description:
+      'List experiences — movies watched, books read, albums listened to, exhibitions visited '
+      + '— newest first. Filter by category, action, occurred-date window, or tag. Category '
+      + 'and action accept singular or plural words.',
     parameters: {
+      category: { type: 'string', description: 'Object category, e.g. movie, book, album, exhibition.' },
+      action: { type: 'string', description: 'What was done, e.g. watched, read, listened, visited.' },
       ...windowParameters,
       tag: { type: 'string', description: 'Exact tag match, case-insensitive.' },
       limit: limitParameter,
@@ -55,24 +60,24 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
         type: 'object',
         additionalProperties: false,
         properties: {
-          records: { type: 'array', items: movieRowSchema, required: true },
+          records: { type: 'array', items: experienceRowSchema, required: true },
           count: { type: 'integer', required: true },
         },
       },
       render: (args, value) => textBlock(
         value.count === 0
-          ? `No movies in ${describeWindow(args.from, args.to, args.period)}.`
-          : `${value.count} movie(s) in ${describeWindow(args.from, args.to, args.period)}:\n`
-            + value.records.map(renderMovie).map(line => `- ${line}`).join('\n'),
+          ? `No experiences in ${describeWindow(args.from, args.to, args.period)}.`
+          : `${value.count} experience(s) in ${describeWindow(args.from, args.to, args.period)}:\n`
+            + value.records.map(renderExperience).map(line => `- ${line}`).join('\n'),
       ),
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      const records = await service.queryMovies(args)
+      const records = await service.queryExperiences(args)
       return { records, count: records.length }
     },
-    presentCall: args => ({ card: 'generic', title: 'Query movies', kind: 'other', rawInput: args }),
+    presentCall: args => ({ card: 'generic', title: 'Query experiences', kind: 'other', rawInput: args }),
   })
 
   const queryTasks = defineTool({
@@ -262,7 +267,7 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
   })
 
   return [
-    queryMovies,
+    queryExperiences,
     queryTasks,
     queryProjectLogs,
     queryBlogPosts,
@@ -301,7 +306,7 @@ function renderSearchResult(text: string, value: JsonValue): string {
 /** One-line summary of a searched row, keyed by its object type. */
 function summarizeRow(type: string, row: Record<string, unknown>): string {
   switch (type) {
-    case 'movie': return renderMovie(row as never)
+    case 'experience': return renderExperience(row as never)
     case 'project': return renderProject(row as never)
     case 'project_log': return renderProjectLog(row as never)
     case 'task': return renderTask(row as never)

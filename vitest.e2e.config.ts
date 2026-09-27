@@ -2,14 +2,17 @@ import { defineConfig } from 'vitest/config'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { standardDecoratorPlugin } from '../vitest.shared.ts'
 
-// Personal bundle lives outside the dsh workspace; run from the dsh repo root
-// (`npx vitest run --config dsh-personal/vitest.config.ts`) so tsconfig paths
-// resolve the @deepseek-ai/* dev imports against the checkout.
+// Real-API lane for the dsh-personal bundle. Run from the dsh repo root with
+// a configured default model route in the real harness home:
+//   npx vitest run --config dsh-personal/vitest.e2e.config.ts
+// Each test self-skips when no route is configured.
 export default defineConfig({
   plugins: [standardDecoratorPlugin(), tsconfigPaths({ projects: ['./tsconfig.base.json'] })],
   test: {
-    include: ['dsh-personal/tests/**/*.spec.ts'],
+    include: ['dsh-personal/tests/**/*.e2e.ts'],
     setupFiles: ['scripts/test-invariants.ts'],
     environment: 'node',
+    testTimeout: 900_000,
+    hookTimeout: 120_000,
   },
 })

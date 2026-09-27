@@ -10,8 +10,8 @@ import type { ParameterSchemaSpec, ValueSchemaSpec } from '@deepseek-ai/dsh-tool
 import type {
   BlogPostRow,
   DailyLogRow,
+  ExperienceRow,
   IdeaRow,
-  MovieRow,
   ProjectLogRow,
   ProjectRow,
   TaskRow,
@@ -46,7 +46,7 @@ export const BLOG_POST_STATUSES = ['IDEA', 'OUTLINE', 'DRAFT', 'REVIEW', 'PUBLIS
 
 /** Personal object types a search can select. */
 export const PERSONAL_TYPES = [
-  'movie', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log',
+  'experience', 'project', 'project_log', 'task', 'blog_post', 'website', 'idea', 'daily_log',
 ] as const
 
 /** The shared date-window parameter block; explicit dates win over `period`. */
@@ -69,10 +69,10 @@ export function dateParam(label: string): { type: 'string'; description: string 
   return { type: 'string', description: `${label} as YYYY-MM-DD; omit for today.` }
 }
 
-/** Row cap parameter. */
+/** Row cap parameter; the service clamps values above 200. */
 export const limitParameter = {
   type: 'integer',
-  description: 'Maximum rows to return, 1-200; defaults to 20.',
+  description: 'Maximum rows to return; defaults to 20, capped at 200.',
 } as const
 
 /** Field fragments shared by the row output schemas; spread, never copied. */
@@ -82,18 +82,20 @@ const stampFields = {
   updatedAt: { type: 'string', required: true },
 } as const
 
-/** Movie row output schema. */
-export const movieRowSchema = {
+/** Experience row output schema. */
+export const experienceRowSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
     id: { type: 'string', required: true },
+    category: { type: 'string', required: true },
+    action: { type: 'string', required: true },
     title: { type: 'string', required: true },
-    watchedAt: { type: 'string', required: true },
+    occurredOn: { type: 'string', required: true },
     rating: { oneOf: [{ type: 'number' }, { type: 'null' }] as const, required: true },
     note: { type: 'string', required: true },
     ...tagFields,
-    ...stampFields,
+    createdAt: { type: 'string', required: true },
   },
 } satisfies ValueSchemaSpec
 
@@ -230,14 +232,14 @@ export function textBlock(text: string): Array<{ type: 'text'; text: string }> {
 }
 
 /**
- * Render one movie row as a line.
+ * Render one experience row as a line.
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderMovie(row: Pick<MovieRow, 'title' | 'watchedAt' | 'rating' | 'tags'>): string {
-  const rating = row.rating === null ? 'unrated' : `${row.rating}/10`
+export function renderExperience(row: Pick<ExperienceRow, 'action' | 'title' | 'rating' | 'tags'>): string {
+  const rating = row.rating === null ? '' : ` ${row.rating}/10`
   const tags = row.tags.length > 0 ? ` [${row.tags.join(', ')}]` : ''
-  return `${row.watchedAt} 《${row.title}》 ${rating}${tags}`
+  return `${row.action} ${row.title}${rating}${tags}`
 }
 
 /**

@@ -10,7 +10,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { PersonalService } from '../index.ts'
 import type { DailyReview, WeeklyReview } from '../types.ts'
-import { renderBlogPost, renderIdea, renderMovie, renderProjectLog, renderTask, textBlock } from './common.ts'
+import { renderBlogPost, renderExperience, renderIdea, renderProjectLog, renderTask, textBlock } from './common.ts'
 
 /**
  * Build the two review tools over one service.
@@ -22,7 +22,7 @@ export function createReviewTools(service: PersonalService): ToolDefinition[] {
     name: 'generate_daily_review',
     description:
       'Assemble the day\'s facts from the personal database: project logs, tasks done and '
-      + 'still open, movies watched, blog posts and ideas created, websites with open tasks, '
+      + 'still open, experiences, blog posts and ideas created, websites with open tasks, '
       + 'and daily-log entries. Narrate the result; do not invent facts beyond it.',
     parameters: {
       date: { type: 'string', description: 'Reviewed date YYYY-MM-DD; omit for today.' },
@@ -47,7 +47,7 @@ export function createReviewTools(service: PersonalService): ToolDefinition[] {
     name: 'generate_weekly_review',
     description:
       'Assemble one week\'s facts (Monday through Sunday) from the personal database: active '
-      + 'projects, tasks done and still open, movies watched, blog posts and ideas created, '
+      + 'projects, tasks done and still open, experiences, blog posts and ideas created, '
       + 'and websites with open tasks. Narrate the result; do not invent facts beyond it.',
     parameters: {
       date: { type: 'string', description: 'Any date inside the reviewed week, YYYY-MM-DD; omit for the current week.' },
@@ -109,11 +109,11 @@ export function renderWeeklyReview(review: WeeklyReview): string {
 /** Append the task and creation sections shared by both review shapes. */
 function pushCoreFacts(
   sections: string[],
-  review: Pick<DailyReview, 'tasksDone' | 'tasksOpen' | 'movies' | 'blogPosts' | 'ideas'>,
+  review: Pick<DailyReview, 'tasksDone' | 'tasksOpen' | 'experiences' | 'blogPosts' | 'ideas'>,
 ): void {
   pushTasks(sections, 'Tasks done', review.tasksDone)
   pushTasks(sections, 'Tasks open', review.tasksOpen)
-  pushRows(sections, 'Movies watched', review.movies, renderMovie)
+  pushRows(sections, 'Experiences', review.experiences, renderExperience)
   pushRows(sections, 'Blog posts created', review.blogPosts, renderBlogPost)
   pushRows(sections, 'Ideas captured', review.ideas, renderIdea)
 }

@@ -1,7 +1,23 @@
 {
+  // Self-contained typecheck for the out-of-tree bundle. Extends the dsh
+  // checkout's base config for the @deepseek-ai/* paths map; the include list
+  // opens the dependency source trees those paths resolve into (only the
+  // imported closure enters the program). Requires the dsh checkout.
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    
+    "allowImportingTsExtensions": true,
+    "experimentalDecorators": true,
   },
-  "include": ["src"]
+  "include": [
+    "src/**/*",
+    "../packages/**/src/**/*",
+    "../vendor/**/src/**/*",
+    "../native/**/src/**/*"
+  ],
+  "exclude": [
+    "../packages/**/tests/**",
+    "../packages/**/src/**/*.spec.ts"
+  ]
 }

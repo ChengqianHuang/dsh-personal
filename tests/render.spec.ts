@@ -9,13 +9,13 @@ import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { Context } from '@deepseek-ai/cordis'
-import type { BlogPostId, DailyLogId, IdeaId, MovieId, ProjectId, ProjectLogId, TaskId, TaskPriority, TaskStatus, WebsiteId } from '../src/types.ts'
+import type { BlogPostId, DailyLogId, ExperienceId, IdeaId, ProjectId, ProjectLogId, TaskId, TaskPriority, TaskStatus, WebsiteId } from '../src/types.ts'
 import { PersonalService } from '../src/index.ts'
 import { createQueryTools } from '../src/tools/query.ts'
 import { createReviewTools } from '../src/tools/review.ts'
 import { createWriteTools } from '../src/tools/write.ts'
 import { renderDailyReview, renderWeeklyReview } from '../src/tools/review.ts'
-import { renderMovie } from '../src/tools/common.ts'
+import { renderExperience } from '../src/tools/common.ts'
 
 let root: string | undefined
 
@@ -38,8 +38,8 @@ async function executeJson(
 
 /** The samples record representative rows; the queries then read them back. */
 const WRITE_SAMPLES: Record<string, Record<string, unknown>> = {
-  record_movie: { title: '灵媒', rating: 7, tags: ['horror'] },
-  record_movie_full: { title: 'Quiet', watched_at: '2026-09-25' },
+  record_experience: { category: 'movie', action: 'watched', title: '灵媒', rating: 7, tags: ['horror'] },
+  record_experience_full: { category: 'movie', action: 'watched', title: 'Quiet', occurred_on: '2026-09-25' },
   create_project: { name: 'Forge', description: 'LLM app' },
   record_project_log: { project: 'Forge', title: '定位了中文错位问题', status: 'DONE', tags: ['debug'] },
   create_task: { title: '检查 HTTPS 证书', due_in: 'next-week', priority: 'HIGH' },
@@ -79,7 +79,7 @@ describe('tool projections', () => {
     // A second pass exercises the complementary optional-argument paths:
     // exact dates, omitted optionals, and a project created on first mention.
     const secondPass: Record<string, Record<string, unknown>> = {
-      record_movie: { title: 'Quiet', watched_at: '2026-09-25' },
+      record_experience: { title: 'Quiet', category: 'movie', action: 'watched', occurred_on: '2026-09-25' },
       record_project_log: { project: 'Fresh Project', title: '开张' },
       create_task: WRITE_SAMPLES.create_task_full ?? {},
       create_blog_post: { title: 'No Project Post' },
@@ -94,7 +94,7 @@ describe('tool projections', () => {
     }
 
     // Half-point ratings display as stored.
-    expect(renderMovie({ title: '沙丘 2', watchedAt: '2026-09-26', rating: 7.5, tags: [] })).toContain('7.5/10')
+    expect(renderExperience({ action: 'watched', title: '沙丘 2', rating: 7.5, tags: [] })).toContain('watched 沙丘 2 7.5/10')
 
     // The update tools run once their target ids exist.
     const updates: Record<string, Record<string, unknown>> = {
@@ -128,7 +128,7 @@ describe('tool projections', () => {
     const service = new PersonalService(new Context(), { databasePath: join(root, 'personal.db'), timezone: 'UTC' })
     // Seed one row of each queried type; the website exists before the task
     // that links to it.
-    await service.recordMovie({ title: '灵媒', rating: 7 })
+    await service.recordExperience({ category: 'movie', action: 'watched', title: '灵媒', rating: 7 })
     await service.recordProjectLog({ project: 'Forge', title: '定位了问题' })
     await service.registerWebsite({ name: 'Blog', domain: 'blog.example.com' })
     await service.createTask({ title: '证书', dueIn: 'today', project: 'Forge', website: 'blog.example.com' })
@@ -138,7 +138,7 @@ describe('tool projections', () => {
 
     const tools = [...createQueryTools(service), ...createReviewTools(service)]
     const samples: Record<string, Record<string, unknown>> = {
-      query_movies: { period: 'this-month' },
+      query_experiences: { period: 'this-month' },
       query_tasks: { statuses: ['TODO'] },
       query_project_logs: { project: 'Forge' },
       query_blog_posts: { status: 'IDEA' },
@@ -158,10 +158,10 @@ describe('tool projections', () => {
 
     // Explicit window bounds render their own label.
     const windowed = { from: '2026-01-01', to: '2026-01-31' }
-    const windowText = tools.find(t => t.name === 'query_movies')!.output.render(windowed, { records: [], count: 0 }).filter(block => block.type === 'text').map(block => block.text).join('')
+    const windowText = tools.find(t => t.name === 'query_experiences')!.output.render(windowed, { records: [], count: 0 }).filter(block => block.type === 'text').map(block => block.text).join('')
     expect(windowText).toContain('2026-01-01..2026-01-31')
     const oneSided = { from: '2026-01-01' }
-    const oneSidedText = tools.find(t => t.name === 'query_movies')!.output.render(oneSided, { records: [], count: 0 }).filter(block => block.type === 'text').map(block => block.text).join('')
+    const oneSidedText = tools.find(t => t.name === 'query_experiences')!.output.render(oneSided, { records: [], count: 0 }).filter(block => block.type === 'text').map(block => block.text).join('')
     expect(oneSidedText).toContain('2026-01-01..…')
 
     // The row-list tools render their empty shape too.
@@ -180,7 +180,7 @@ describe('tool projections', () => {
     const websiteText = websites.output.render({}, populated).filter(block => block.type === 'text').map(block => block.text).join('')
     expect(websiteText).toContain('- Blog (blog.example.com)')
     // A to-only window label renders the open start.
-    const toOnly = tools.find(t => t.name === 'query_movies')!
+    const toOnly = tools.find(t => t.name === 'query_experiences')!
     const toOnlyText = toOnly.output.render({ to: '2026-01-31' }, { records: [], count: 0 }).filter(block => block.type === 'text').map(block => block.text).join('')
     expect(toOnlyText).toContain('…..2026-01-31')
     // query_tasks also resolves a real project and website reference.
@@ -243,13 +243,13 @@ describe('tool projections', () => {
       work: [{ project: { id: brandString<ProjectId>('p'), name: 'Forge', description: '', status: 'ACTIVE', createdAt: '', updatedAt: '' }, logs: [{ id: brandString<ProjectLogId>('l'), projectId: brandString<ProjectId>('p'), date: today, title: '定位了问题', content: '', status: 'DONE', tags: [], createdAt: '' }] }],
       tasksDone: [task],
       tasksOpen: [{ ...task, id: brandString<TaskId>('t3'), title: 'open', status: 'TODO' }],
-      movies: [{ id: brandString<MovieId>('m'), title: '灵媒', watchedAt: today, rating: null, note: '', tags: ['horror'], createdAt: '', updatedAt: '' }],
+      experiences: [{ id: brandString<ExperienceId>('m'), category: 'movie', action: 'watched', title: '灵媒', occurredOn: today, rating: null, note: '', tags: ['horror'], createdAt: '' }],
       blogPosts: [{ id: brandString<BlogPostId>('b'), title: 'DSH', status: 'IDEA', summary: '', content: '', tags: [], relatedProjectId: null, createdAt: '', updatedAt: '' }],
       ideas: [{ id: brandString<IdeaId>('i'), title: 'idea', content: '', category: 'writing', relatedProjectId: null, createdAt: '' }],
       websites: [website],
       dailyLogs: [{ id: brandString<DailyLogId>('d'), date: today, summary: '小结', rawText: '', createdAt: '' }],
     })
-    for (const marker of ['Work:', 'Tasks open:', 'Movies watched:', 'Blog posts created:', 'Ideas captured:', 'Websites with open tasks:', 'Daily logs:']) {
+    for (const marker of ['Work:', 'Tasks open:', 'Experiences:', 'Blog posts created:', 'Ideas captured:', 'Websites with open tasks:', 'Daily logs:']) {
       expect(dailyFull, marker).toContain(marker)
     }
     const weeklyFull = renderWeeklyReview({
@@ -258,7 +258,7 @@ describe('tool projections', () => {
       activeProjects: [{ id: brandString<ProjectId>('p'), name: 'Forge', description: '', status: 'ACTIVE', createdAt: '', updatedAt: '' }],
       tasksDone: [task],
       tasksOpen: [],
-      movies: [{ id: brandString<MovieId>('m'), title: '灵媒', watchedAt: today, rating: null, note: '', tags: [], createdAt: '', updatedAt: '' }],
+      experiences: [{ id: brandString<ExperienceId>('m'), category: 'movie', action: 'watched', title: '灵媒', occurredOn: today, rating: null, note: '', tags: [], createdAt: '' }],
       blogPosts: [{ id: brandString<BlogPostId>('b'), title: 'DSH', status: 'IDEA', summary: '', content: '', tags: [], relatedProjectId: null, createdAt: '', updatedAt: '' }],
       ideas: [{ id: brandString<IdeaId>('i'), title: 'idea', content: '', category: 'writing', relatedProjectId: null, createdAt: '' }],
       websites: [website],
@@ -267,9 +267,9 @@ describe('tool projections', () => {
     expect(weeklyFull).toContain('Active projects:')
     const weeklyEmpty = renderWeeklyReview({
       from: '2026-09-21', to: '2026-09-27',
-      activeProjects: [], tasksDone: [], tasksOpen: [], movies: [], blogPosts: [], ideas: [], websites: [],
+      activeProjects: [], tasksDone: [], tasksOpen: [], experiences: [], blogPosts: [], ideas: [], websites: [],
     })
-    expect(weeklyEmpty).not.toContain('Movies watched:')
+    expect(weeklyEmpty).not.toContain('Experiences:')
   })
 
   it('renders empty query results and empty search results', async () => {
@@ -277,9 +277,9 @@ describe('tool projections', () => {
     const service = new PersonalService(new Context(), { databasePath: join(root, 'personal.db'), timezone: 'UTC' })
     const tools = new Map(createQueryTools(service).map(tool => [tool.name, tool]))
 
-    const empty = await (tools.get('query_movies')!.execute as (a: unknown, e: ToolRunContext) => Promise<JsonValue>)( {}, exec())
-    const text = tools.get('query_movies')!.output.render({}, empty).filter(block => block.type === 'text').map(block => block.text).join('')
-    expect(text).toContain('No movies')
+    const empty = await (tools.get('query_experiences')!.execute as (a: unknown, e: ToolRunContext) => Promise<JsonValue>)( {}, exec())
+    const text = tools.get('query_experiences')!.output.render({}, empty).filter(block => block.type === 'text').map(block => block.text).join('')
+    expect(text).toContain('No experiences')
 
     const nothing = await (tools.get('search_personal_data')!.execute as (a: unknown, e: ToolRunContext) => Promise<JsonValue>)({ text: 'absent-token' }, exec())
     const searchText = tools.get('search_personal_data')!.output.render({ text: 'absent-token' }, nothing).filter(block => block.type === 'text').map(block => block.text).join('')

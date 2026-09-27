@@ -2,7 +2,7 @@
 
 https://github.com/ChengqianHuang/dsh-personal · topic: `dsh-plugin`
 
-个人助理 bundle：让 dsh 用自然语言记录/查询/回顾你的个人数据（电影、项目日志、任务、博客、网站、想法、每日记录），全部落在一个 SQLite 文件（`~/.dsh/personal/personal.db`）里。LLM 只负责理解和总结，事实全部来自 SQLite，重启后依旧可查。
+个人助理 bundle：让 dsh 用自然语言记录/查询/回顾你的个人数据（**经历**——电影/书/专辑/展览等任意类别、项目日志、任务、博客、网站、想法、每日记录），全部落在一个 SQLite 文件（`~/.dsh/personal/personal.db`）里。LLM 只负责理解和总结，事实全部来自 SQLite，重启后依旧可查。
 
 安装与使用见 dsh 用户文档 `docs/user/develop/basic/publish.md`。设计决策见 [DESIGN.md](DESIGN.md)。
 
@@ -42,8 +42,8 @@ npx vitest run --config dsh-personal/vitest.config.ts   # 64 项测试（在 dsh
 
 ## 工具（19 个）
 
-- 记录：`record_movie` `create_project` `record_project_log` `create_task` `update_task` `complete_task` `create_blog_post` `update_blog_post` `create_idea` `record_daily_log` `register_website`
-- 查询：`query_movies` `query_tasks` `query_project_logs` `query_blog_posts` `query_websites` `search_personal_data`
+- 记录：`record_experience`（任意经历类别：movie/book/album/exhibition/…，新增类别无需改代码）`create_project` `record_project_log` `create_task` `update_task` `complete_task` `create_blog_post` `update_blog_post` `create_idea` `record_daily_log` `register_website`
+- 查询：`query_experiences` `query_tasks` `query_project_logs` `query_blog_posts` `query_websites` `search_personal_data`
 - 回顾：`generate_daily_review` `generate_weekly_review`
 
-用法示例：直接说「今天看了《灵媒》，7.5 分」「Forge 今天定位了中文错位问题」「周末检查博客证书」「我有哪些事情没做？」「本周回顾」。
+用法示例：直接说「今天看了《灵媒》，7.5 分」「读了半本《失控》」「Forge 今天定位了中文错位问题」「周末检查博客证书」「我有哪些事情没做？」「本周回顾」。

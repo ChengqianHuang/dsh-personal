@@ -8,8 +8,8 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
-/** A durable movie record id. */
-export type MovieId = Branded<'PersonalMovieId'>
+/** A durable experience record id. */
+export type ExperienceId = Branded<'PersonalExperienceId'>
 
 /** A durable project record id. */
 export type ProjectId = Branded<'PersonalProjectId'>
@@ -37,7 +37,7 @@ export type RelationId = Branded<'PersonalRelationId'>
 
 /** The personal object kinds a relation or search can address. */
 export type PersonalObjectType =
-  | 'movie'
+  | 'experience'
   | 'project'
   | 'project_log'
   | 'task'
@@ -61,18 +61,22 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH'
 /** Blog-post writing pipeline states. */
 export type BlogPostStatus = 'IDEA' | 'OUTLINE' | 'DRAFT' | 'REVIEW' | 'PUBLISHED'
 
-/** A movie the user watched, with optional rating and note. */
-export interface MovieRow {
-  id: MovieId
+/** One experience the user had: watched a movie, read a book, visited an exhibition. */
+export interface ExperienceRow {
+  id: ExperienceId
+  /** Open object category, stored lowercase: movie, book, album, exhibition, ... */
+  category: string
+  /** What was done, stored lowercase: watched, read, listened, visited, ... */
+  action: string
+  /** Name of the experienced thing, e.g. the movie or book title. */
   title: string
-  /** Watch date, `YYYY-MM-DD` in the configured zone. */
-  watchedAt: string
+  /** Experience date, `YYYY-MM-DD` in the configured zone; never in the future. */
+  occurredOn: string
   /** User rating 0-10, or null when unrated. */
   rating: number | null
   note: string
   tags: string[]
   createdAt: string
-  updatedAt: string
 }
 
 /** A tracked project. */
@@ -175,12 +179,17 @@ export interface RelationRow {
   createdAt: string
 }
 
-/** Input for {@linkPersonalService.recordMovie}. */
-export interface RecordMovieInput {
+/** Input for {@link PersonalService.recordExperience}. */
+export interface RecordExperienceInput {
+  /** Open object category, lowercase singular: movie, book, album, exhibition, ... */
+  category: string
+  /** What was done, lowercase singular: watched, read, listened, visited, ... */
+  action: string
+  /** Name of the experienced thing. */
   title: string
+  /** Experience date `YYYY-MM-DD`; omitted means today in the configured zone. */
+  occurredOn?: string
   rating?: number
-  /** Watch date `YYYY-MM-DD`; omitted means today in the configured zone. */
-  watchedAt?: string
   note?: string
   tags?: string[]
 }
@@ -302,9 +311,13 @@ export interface DateWindowFilter {
   period?: QueryPeriod
 }
 
-/** Movie query filter. */
-export interface MovieFilter extends DateWindowFilter {
-  /** Case-insensitive substring match on tags. */
+/** Experience query filter; category and action accept singular or plural words. */
+export interface ExperienceFilter extends DateWindowFilter {
+  /** Object category, e.g. movie, book, album, exhibition. */
+  category?: string
+  /** What was done, e.g. watched, read, listened, visited. */
+  action?: string
+  /** Case-insensitive exact tag match. */
   tag?: string
   limit?: number
 }
@@ -388,7 +401,7 @@ export interface DailyReview {
   tasksDone: TaskRow[]
   /** Tasks still open (TODO or DOING) as of the review. */
   tasksOpen: TaskRow[]
-  movies: MovieRow[]
+  experiences: ExperienceRow[]
   blogPosts: BlogPostRow[]
   ideas: IdeaRow[]
   websites: ReviewWebsiteTasks[]
@@ -404,7 +417,7 @@ export interface WeeklyReview {
   activeProjects: ProjectRow[]
   tasksDone: TaskRow[]
   tasksOpen: TaskRow[]
-  movies: MovieRow[]
+  experiences: ExperienceRow[]
   blogPosts: BlogPostRow[]
   ideas: IdeaRow[]
   websites: ReviewWebsiteTasks[]

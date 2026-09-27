@@ -15,7 +15,7 @@ import { openPersonalDatabase } from '../src/store/open.ts'
 import * as Personal from '../src/index.ts'
 
 const TOOL_NAMES = [
-  'record_movie',
+  'record_experience',
   'create_project',
   'record_project_log',
   'create_task',
@@ -26,7 +26,7 @@ const TOOL_NAMES = [
   'create_idea',
   'record_daily_log',
   'register_website',
-  'query_movies',
+  'query_experiences',
   'query_tasks',
   'query_project_logs',
   'query_blog_posts',
@@ -92,14 +92,14 @@ describe('dsh-personal real Loader composition', () => {
     const result = await ctx.tools.execute({
       signal: new AbortController().signal,
       callId: 'compose-1' as never,
-      name: 'record_movie',
-      arguments: { title: '灵媒', rating: 7 },
+      name: 'record_experience',
+      arguments: { category: 'movie', action: 'watched', title: '灵媒', rating: 7 },
     })
     expect(result.isError).toBe(false)
 
     // Source of truth check: the row is in SQLite, not only in memory.
     const db = await openPersonalDatabase(join(root!, 'personal.db'))
-    const rows = db.prepare('SELECT title, rating FROM movies').all() as Array<{ title: string; rating: number }>
+    const rows = db.prepare('SELECT title, rating FROM experiences').all() as Array<{ title: string; rating: number }>
     db.close()
     expect(rows).toEqual([{ title: '灵媒', rating: 7 }])
   }, 30_000)
@@ -111,17 +111,17 @@ describe('dsh-personal real Loader composition', () => {
     await tools.execute({
       signal: new AbortController().signal,
       callId: 'compose-2' as never,
-      name: 'record_movie',
-      arguments: { title: 'Quiet' },
+      name: 'record_experience',
+      arguments: { category: 'movie', action: 'watched', title: 'Quiet' },
     })
-    expect(tools.get('record_movie')).toBeDefined()
+    expect(tools.get('record_experience')).toBeDefined()
     await ctx.fiber.dispose()
     context = undefined
-    expect(tools.get('record_movie')).toBeUndefined()
-    await expect(personal.queryMovies({})).rejects.toThrow('disposed')
+    expect(tools.get('record_experience')).toBeUndefined()
+    await expect(personal.queryExperiences({})).rejects.toThrow('disposed')
     // The file lock is released: an independent open succeeds and sees the row.
     const db = await openPersonalDatabase(join(root!, 'personal.db'))
-    const rows = db.prepare('SELECT title FROM movies').all() as Array<{ title: string }>
+    const rows = db.prepare('SELECT title FROM experiences').all() as Array<{ title: string }>
     db.close()
     expect(rows).toEqual([{ title: 'Quiet' }])
   }, 30_000)

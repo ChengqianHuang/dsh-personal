@@ -1,0 +1,26 @@
+# Test-only patch over the shipped headless profile for the dsh-personal e2e.
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- id: agent-loop
+  config:
+    agents:
+      - id: main
+        provider: !!js process.env.E2E_PROVIDER
+        model: !!js process.env.E2E_MODEL
+        cwd: !!js process.cwd()
+
+- id: session-persistence-jsonl
+  config:
+    root: './.sessions'
+    compression: none
+
+- insert:
+    - id: personal
+      name: '../../src/index.ts'
+      config:
+        databasePath: !!js process.env.E2E_DB
+        timezone: Asia/Shanghai

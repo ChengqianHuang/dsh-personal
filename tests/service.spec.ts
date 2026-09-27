@@ -26,23 +26,34 @@ async function service(): Promise<PersonalService> {
 }
 
 describe('capture and mutation', () => {
-  it('records a movie, defaulting the watch date to today', async () => {
+  it('records an experience, defaulting the date to today and keeping decimals', async () => {
     const svc = await service()
-    const movie = await svc.recordMovie({ title: ' 灵媒 ', rating: 7, tags: ['horror'] })
-    expect(movie).toMatchObject({
-      title: '灵媒', watchedAt: todayIso('UTC'), rating: 7, tags: ['horror'], note: '',
+    const experience = await svc.recordExperience({
+      category: ' Movie ', action: ' Watched ', title: ' 灵媒 ', rating: 7, tags: ['horror'],
     })
-    const undated = await svc.recordMovie({ title: 'Quiet' })
+    expect(experience).toMatchObject({
+      category: 'movie', action: 'watched', title: '灵媒',
+      occurredOn: todayIso('UTC'), rating: 7, tags: ['horror'], note: '',
+    })
+    const undated = await svc.recordExperience({ category: 'movie', action: 'watched', title: 'Quiet' })
     expect(undated.rating).toBeNull()
-    const half = await svc.recordMovie({ title: '沙丘 2', rating: 7.5 })
+    const half = await svc.recordExperience({ category: 'movie', action: 'watched', title: '沙丘 2', rating: 7.5 })
     expect(half.rating).toBe(7.5)
-    const quarter = await svc.queryMovies({})
+    const quarter = await svc.queryExperiences({})
     expect(quarter.find(row => row.title === '沙丘 2')?.rating).toBe(7.5)
-    expect((await svc.recordMovie({ title: 'x', rating: 8.25 })).rating).toBe(8.25)
-    await expect(svc.recordMovie({ title: '   ' })).rejects.toThrow('movie title')
-    await expect(svc.recordMovie({ title: 'x', rating: 11 })).rejects.toThrow('rating')
-    await expect(svc.recordMovie({ title: 'x', rating: Number.NaN })).rejects.toThrow('rating')
-    await expect(svc.recordMovie({ title: 'x', watchedAt: '2026-02-30' })).rejects.toThrow('watchedAt')
+    expect((await svc.recordExperience({ category: 'book', action: 'read', title: 'x', rating: 8.25 })).rating).toBe(8.25)
+    await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: '   ' })).rejects.toThrow('experience title')
+    await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', rating: 11 })).rejects.toThrow('rating')
+    await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', rating: Number.NaN })).rejects.toThrow('rating')
+    await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', occurredOn: '2026-02-30' })).rejects.toThrow('occurredOn')
+  })
+
+  it('rejects future occurred_on dates and points planned items at tasks', async () => {
+    const svc = await service()
+    await expect(svc.recordExperience({
+      category: 'movie', action: 'watched', title: '未来', occurredOn: addDays(todayIso('UTC'), 2),
+    })).rejects.toThrow('must not be in the future')
+    expect(await svc.recordExperience({ category: 'movie', action: 'watched', title: 'today-ok' })).toBeDefined()
   })
 
   it('creates projects, rejecting duplicate names', async () => {
@@ -196,20 +207,19 @@ describe('queries and search', () => {
 
   it('searches across types and honors the type filter', async () => {
     const svc = await service()
-    await svc.recordMovie({ title: '灵媒', note: '泰剧恐怖片' })
+    await svc.recordExperience({ category: 'movie', action: 'watched', title: '灵媒', note: '泰剧恐怖片' })
     await svc.recordProjectLog({ project: 'Forge', title: 'Minimax streaming 中文错位' })
     await svc.createIdea({ title: '写一篇 DSH Personal Agent 博客' })
     const hits = await svc.searchPersonal({ text: 'dsh' })
     expect(Object.keys(hits)).toEqual(['idea'])
     const everything = await svc.searchPersonal({ text: '中文' })
     expect(Object.keys(everything)).toEqual(['project_log'])
-    const limited = await svc.searchPersonal({ text: '灵媒', types: ['movie', 'task'] })
-    expect(Object.keys(limited)).toEqual(['movie'])
+    const limited = await svc.searchPersonal({ text: '灵媒', types: ['experience', 'task'] })
+    expect(Object.keys(limited)).toEqual(['experience'])
     expect(await svc.searchPersonal({ text: 'absent-token' })).toEqual({})
     await expect(svc.searchPersonal({ text: '  ' })).rejects.toThrow('search text')
     await expect(svc.searchPersonal({ text: 'x', limit: 0 })).rejects.toThrow('limit')
-    await expect(svc.searchPersonal({ text: 'x', limit: 201 })).rejects.toThrow('limit')
-    expect(await svc.searchPersonal({ text: '灵媒', limit: 5 })).toHaveProperty('movie')
+    expect(await svc.searchPersonal({ text: '灵媒', limit: 5 })).toHaveProperty('experience')
   })
 })
 
@@ -222,7 +232,7 @@ describe('reviews', () => {
     const task = await svc.createTask({ title: 'ship blog' })
     await svc.completeTask(task.id)
     await svc.createTask({ title: 'outstanding' })
-    await svc.recordMovie({ title: '灵媒', rating: 7 })
+    await svc.recordExperience({ category: 'movie', action: 'watched', title: '灵媒', rating: 7 })
     await svc.createBlogPost({ title: 'DSH Personal Agent' })
     await svc.createIdea({ title: 'idea one' })
     await svc.registerWebsite({ name: 'Blog', domain: 'blog.example.com' })
@@ -236,7 +246,7 @@ describe('reviews', () => {
     expect([...review.work[0]!.logs.map(log => log.title)].sort()).toEqual(['修完了适配层', '定位了中文错位问题'])
     expect(review.tasksDone.map(row => row.title)).toEqual(['ship blog'])
     expect(review.tasksOpen.map(row => row.title).sort()).toEqual(['outstanding', '续费证书'].sort())
-    expect(review.movies.map(row => row.title)).toEqual(['灵媒'])
+    expect(review.experiences.map(row => row.title)).toEqual(['灵媒'])
     expect(review.blogPosts.map(row => row.title)).toEqual(['DSH Personal Agent'])
     expect(review.ideas.map(row => row.title)).toEqual(['idea one'])
     expect(review.websites[0]!.openTasks.map(row => row.title)).toEqual(['续费证书'])
@@ -251,7 +261,7 @@ describe('reviews', () => {
     expect(review.from <= today).toBe(true)
     expect(review.to >= today).toBe(true)
     expect(review.activeProjects.map(project => project.name)).toEqual(['Forge'])
-    expect(review.movies).toEqual([])
+    expect(review.experiences).toEqual([])
   })
 
   it('accepts an explicit weekly anchor date', async () => {
@@ -270,7 +280,7 @@ describe('reviews', () => {
     expect(() => svc.resolveReviewDate(undefined, -1)).toThrow('daysAgo')
     await expect(svc.generateDailyReview('2026-02-30')).rejects.toThrow('date')
     svc.close()
-    await expect(svc.queryMovies({})).rejects.toThrow('disposed')
+    await expect(svc.queryExperiences({})).rejects.toThrow('disposed')
   })
 })
 

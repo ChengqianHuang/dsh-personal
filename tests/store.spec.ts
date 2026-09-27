@@ -10,7 +10,7 @@ import {
 } from '../src/store/schema.ts'
 import { BlogPostStore } from '../src/store/blogs.ts'
 import { DailyLogStore, IdeaStore } from '../src/store/ideas.ts'
-import { MovieStore } from '../src/store/movies.ts'
+import { ExperienceStore, categoryQueryVariants } from '../src/store/experiences.ts'
 import { ProjectLogStore, ProjectStore } from '../src/store/projects.ts'
 import { RelationStore } from '../src/store/relations.ts'
 import { TaskStore } from '../src/store/tasks.ts'
@@ -42,7 +42,7 @@ describe('open and migrate', () => {
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT GLOB 'sqlite_*'",
     ).all() as Array<{ name: string }>).map(row => row.name)
-    for (const expected of ['movies', 'projects', 'project_logs', 'tasks', 'blog_posts', 'websites', 'ideas', 'daily_logs', 'relations']) {
+    for (const expected of ['experiences', 'projects', 'project_logs', 'tasks', 'blog_posts', 'websites', 'ideas', 'daily_logs', 'relations']) {
       expect(tables).toContain(expected)
     }
     db.close()
@@ -92,7 +92,7 @@ describe('open and migrate', () => {
 async function openStores() {
   const { path, close } = await tempDb()
   const db = await openPersonalDatabase(path)
-  const movies = new MovieStore(db, 'UTC')
+  const experiences = new ExperienceStore(db, 'UTC')
   const projects = new ProjectStore(db)
   const projectLogs = new ProjectLogStore(db, 'UTC')
   const tasks = new TaskStore(db, 'UTC')
@@ -102,7 +102,7 @@ async function openStores() {
   const dailyLogs = new DailyLogStore(db, 'UTC')
   const relations = new RelationStore(db)
   return {
-    stores: { movies, projects, projectLogs, tasks, blogPosts, websites, ideas, dailyLogs, relations },
+    stores: { experiences, projects, projectLogs, tasks, blogPosts, websites, ideas, dailyLogs, relations },
     close: () => {
       db.close()
       close()
@@ -111,23 +111,29 @@ async function openStores() {
 }
 
 describe('stores', () => {
-  it('inserts, reads, and filters movies', async () => {
+  it('inserts, reads, and filters experiences with category normalization', async () => {
     const { stores, close } = await openStores()
     try {
-      stores.movies.insert({
-        id: 'movie_1', title: '灵媒', watchedAt: '2026-09-26', rating: 7, note: '', tags: [' horror '], createdAt: '2026-09-26T00:00:00.000Z',
+      stores.experiences.insert({
+        id: 'exp_1', category: 'Movie', action: 'Watched', title: '灵媒', occurredOn: '2026-09-26', rating: 7.5, note: '', tags: [' horror '], createdAt: '2026-09-26T00:00:00.000Z',
       })
-      stores.movies.insert({
-        id: 'movie_2', title: 'Quiet', watchedAt: '2026-08-01', rating: null, note: 'nice', tags: ['slow'], createdAt: '2026-08-01T00:00:00.000Z',
+      stores.experiences.insert({
+        id: 'exp_2', category: 'book', action: 'read', title: 'Quiet', occurredOn: '2026-08-01', rating: null, note: 'nice', tags: ['slow'], createdAt: '2026-08-01T00:00:00.000Z',
       })
-      expect(stores.movies.get('movie_1' as never)?.title).toBe('灵媒')
-      expect(stores.movies.get('missing' as never)).toBeUndefined()
-      const september = stores.movies.list({ from: '2026-09-01', to: '2026-09-30' })
-      expect(september.map(row => row.id)).toEqual(['movie_1'])
+      expect(stores.experiences.get('exp_1' as never)?.title).toBe('灵媒')
+      expect(stores.experiences.get('exp_1' as never)?.category).toBe('movie')
+      expect(stores.experiences.get('missing' as never)).toBeUndefined()
+      const september = stores.experiences.list({ from: '2026-09-01', to: '2026-09-30' })
+      expect(september.map(row => row.id)).toEqual(['exp_1'])
       expect(september[0]!.tags).toEqual([' horror '])
-      expect(stores.movies.list({ tag: 'SLOW' }).map(row => row.id)).toEqual(['movie_2'])
-      expect(stores.movies.searchText('quiet', {}, 20)).toHaveLength(1)
-      expect(stores.movies.searchText('%', {}, 20)).toHaveLength(0)
+      expect(stores.experiences.list({ tag: 'SLOW' }).map(row => row.id)).toEqual(['exp_2'])
+      // Plural query words match singular writes; case differences match too.
+      expect(stores.experiences.list({ category: 'movies' }).map(row => row.id)).toEqual(['exp_1'])
+      expect(stores.experiences.list({ category: 'BOOK', action: 'reads' }).map(row => row.id)).toEqual(['exp_2'])
+      expect(stores.experiences.searchText('quiet', {}, 20)).toHaveLength(1)
+      expect(stores.experiences.searchText('%', {}, 20)).toHaveLength(0)
+      expect(categoryQueryVariants('movies')).toEqual(['movies', 'movie'])
+      expect(categoryQueryVariants('series')).toEqual(['series', 'serie'])
     } finally {
       close()
     }
@@ -275,11 +281,11 @@ describe('stores', () => {
     const path = join(root, 'personal.db')
     const { DatabaseSync } = await import('node:sqlite')
     const foreign = new DatabaseSync(path)
-    // Ours by fingerprint, but at version 0 with a table migration 1 creates:
-    // the gate passes, migration 1 fails, and the transaction must roll back
+    // Ours by fingerprint, but at version 0 with a table migration 3 creates:
+    // the gate passes, migration 3 fails, and the transaction must roll back
     // leaving version 0 stamped.
     foreign.exec(`PRAGMA application_id = ${PERSONAL_APPLICATION_ID}`)
-    foreign.exec('CREATE TABLE movies (id TEXT PRIMARY KEY) STRICT')
+    foreign.exec('CREATE TABLE experiences (id TEXT PRIMARY KEY) STRICT')
     foreign.close()
     await expect(openPersonalDatabase(path)).rejects.toThrow()
     const db = new DatabaseSync(path)
@@ -292,48 +298,28 @@ describe('stores', () => {
     expect(tables).toEqual([])
   })
 
-  it('upgrades a legacy v1 database to REAL ratings without losing rows', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dsh-personal-store-upgrade-'))
+  it('rejects a legacy v2 database with rebuild instructions instead of misreading it', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-personal-store-legacy-'))
     const path = join(root, 'personal.db')
     const { DatabaseSync } = await import('node:sqlite')
-    // Simulate a v1 database: migration-1 movies shape with INTEGER rating.
     const legacy = new DatabaseSync(path)
     legacy.exec(`PRAGMA application_id = ${PERSONAL_APPLICATION_ID}`)
-    legacy.exec('PRAGMA user_version = 1')
-    legacy.exec(`
-      CREATE TABLE movies (
-        id         TEXT PRIMARY KEY,
-        title      TEXT NOT NULL,
-        watched_at TEXT NOT NULL,
-        rating     INTEGER CHECK (rating IS NULL OR (rating >= 0 AND rating <= 10)),
-        note       TEXT NOT NULL DEFAULT '',
-        tags       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      ) STRICT
-    `)
-    legacy.exec(
-      'INSERT INTO movies (id, title, watched_at, rating, note, tags, created_at, updated_at) '
-        + 'VALUES (\'movie_1\', \'灵媒\', \'2026-09-26\', 7, \'\', \'[]\', \'2026-09-26T00:00:00.000Z\', \'2026-09-26T00:00:00.000Z\')',
-    )
+    legacy.exec('PRAGMA user_version = 2')
+    legacy.exec('CREATE TABLE movies (id TEXT PRIMARY KEY) STRICT')
     legacy.close()
-
-    const db = await openPersonalDatabase(path)
-    try {
-      const version = db.prepare('PRAGMA user_version').get() as { user_version: number }
-      expect(version.user_version).toBe(PERSONAL_SCHEMA_VERSION)
-      const columns = db.prepare('PRAGMA table_info(movies)').all() as Array<{ name: string; type: string }>
-      expect(columns.find(column => column.name === 'rating')?.type).toBe('REAL')
-      const rows = db.prepare('SELECT title, rating FROM movies').all() as Array<{ title: string; rating: number }>
-      expect(rows).toEqual([{ title: '灵媒', rating: 7 }])
-      db.prepare(
-        'INSERT INTO movies (id, title, watched_at, rating, note, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run('movie_2', '沙丘 2', '2026-09-26', 7.5, '', '[]', '2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z')
-      const half = db.prepare('SELECT rating FROM movies WHERE id = ?').get('movie_2') as { rating: number }
-      expect(half.rating).toBe(7.5)
-    } finally {
-      db.close()
-    }
+    const error = await openPersonalDatabase(path).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(SchemaVersionError)
+    expect((error as Error).message).toContain('schema version 2')
+    expect((error as Error).message).toContain('Move or delete the database file')
+    // The legacy file is untouched: no silent deletion, no silent misread.
+    const db = new DatabaseSync(path)
+    const version = db.prepare('PRAGMA user_version').get() as { user_version: number }
+    const tables = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'movies'",
+    ).all() as Array<{ name: string }>)
+    db.close()
+    expect(version.user_version).toBe(2)
+    expect(tables).toEqual([{ name: 'movies' }])
   })
 
   it('opens in-memory databases for tooling', async () => {

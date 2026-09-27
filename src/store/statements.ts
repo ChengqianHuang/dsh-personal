@@ -115,6 +115,33 @@ export function escapeLike(text: string): string {
 }
 
 /**
+ * Run one synchronous write sequence inside a single `BEGIN IMMEDIATE`
+ * transaction, rolling back on any throw. The callback must not await: the
+ * service performs all awaits before entering the transaction, so in-process
+ * tool calls cannot interleave mid-write and cross-process writers serialize
+ * on SQLite's write lock. Not reentrant — never nest.
+ * @param db - the database handle the transaction runs on.
+ * @param work - the write sequence; every statement it makes joins the transaction.
+ * @returns the callback's result.
+ */
+export function withTransaction<T>(db: DatabaseSync, work: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = work()
+    db.exec('COMMIT')
+    return result
+  } catch (error: unknown) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // A rollback itself only fails when the connection is already broken;
+      // the original error is the one worth surfacing.
+    }
+    throw error
+  }
+}
+
+/**
  * Build a case-insensitive substring pattern for `LIKE ? ESCAPE '\'`.
  * @param text - raw search text.
  * @returns the wrapped, escaped pattern.
