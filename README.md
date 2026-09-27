@@ -1,5 +1,7 @@
 # dsh-personal
 
+https://github.com/ChengqianHuang/dsh-personal · topic: `dsh-plugin`
+
 个人助理 bundle：让 dsh 用自然语言记录/查询/回顾你的个人数据（电影、项目日志、任务、博客、网站、想法、每日记录），全部落在一个 SQLite 文件（`~/.dsh/personal/personal.db`）里。LLM 只负责理解和总结，事实全部来自 SQLite，重启后依旧可查。
 
 安装与使用见 dsh 用户文档 `docs/user/develop/basic/publish.md`。设计决策见 [DESIGN.md](DESIGN.md)。
