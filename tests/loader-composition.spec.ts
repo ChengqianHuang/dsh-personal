@@ -136,4 +136,32 @@ describe('dsh-personal real Loader composition', () => {
   it('fails load on an invalid timezone', async () => {
     await expect(boot(['    timezone: "Mars/Olympus"'])).rejects.toThrow('timezone')
   }, 30_000)
+
+  it('ranks registered search-tool results using configured field weights', async () => {
+    const ctx = await boot(['    searchTitleWeight: 1', '    searchBodyWeight: 20'])
+    const db = await openPersonalDatabase(join(root!, 'personal.db'))
+    try {
+      db.exec("INSERT INTO tasks (id, title, status, priority, created_at, updated_at) VALUES ('task_fixture', '证书', 'TODO', 'MEDIUM', '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z')")
+      db.exec("INSERT INTO ideas (id, title, content, category, created_at) VALUES ('idea_fixture', '整理笔记', '证书', '', '2026-09-20T00:00:00.000Z')")
+    } finally { db.close() }
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: 'search-compose' as never,
+      name: 'search_personal_data',
+      arguments: { text: '证书', limit: 2 },
+    })
+    expect(result.isError).toBe(false)
+    expect(result.content.filter(block => block.type === 'text').map(block => block.text).join('')).toMatchInlineSnapshot(`
+      "Found 2 matches for "证书" (relevance order).
+      Keywords: 证书
+      1. idea: 整理笔记
+         Record: {"id":"idea_fixture","title":"整理笔记","content":"证书","category":"","relatedProjectId":null,"createdAt":"2026-09-20T00:00:00.000Z"}
+      2. task: TODO [MEDIUM] 证书
+         Record: {"id":"task_fixture","title":"证书","status":"TODO","priority":"MEDIUM","dueAt":null,"doneAt":null,"projectId":null,"websiteId":null,"sourceType":null,"sourceId":null,"createdAt":"2026-09-20T00:00:00.000Z","updatedAt":"2026-09-20T00:00:00.000Z"}"
+    `)
+  }, 30_000)
+
+  it('fails load on invalid search weights', async () => {
+    await expect(boot(['    searchTagWeight: 0'])).rejects.toThrow('positive finite')
+  }, 30_000)
 })

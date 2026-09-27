@@ -59,7 +59,7 @@ const CAPTURE_TASKS = [
   '读完了《失控》的第一章，8 分。',
   '听了 Daft Punk 的《Random Access Memories》，这张专辑太棒了。',
   '昨天参观了 teamLab 展览。',
-  '今天：Forge 修复了登录错位；看了《火星救援》，8.5 分；明天检查博客证书。',
+  '今天：Forge 修复了登录错位；看了《火星救援》，8.5 分；明天检查博客的 HTTPS 证书。',
   '下周末看《沙丘 3》。',
   '我最近看了哪些电影？',
   '我最近读过什么书？',
@@ -154,16 +154,19 @@ describe.skipIf(route === undefined || !existsSync(join(HOME, '.credentials.yaml
       await copyFile(dbPath, dbPath2)
       const second = await runPersonalSmoke({
         label: 'restart',
-        tasks: ['我最近看了哪些电影？我最近读过什么书？'],
+        tasks: ['我最近看了哪些电影？我最近读过什么书？', '我想找以前提到博客证书的记录，跨所有类型搜索一下。'],
         dbPath: dbPath2,
         inspect: async (cwd) => {
           const events = await readSessionEvents(cwd)
           const calls = events.filter(event => event.type === 'tool/call')
             .map(event => (event.data as { name: string }).name)
           expect(calls).toContain('query_experiences')
+          expect(calls).toContain('search_personal_data')
           const resultText = JSON.stringify(events.filter(event => event.type === 'tool/result'))
           expect(resultText).toContain('灵媒')
           expect(resultText).toContain('失控')
+          expect(resultText).toContain('检查博客的 HTTPS 证书')
+          expect(resultText).toContain('relevance order')
         },
       })
       expect(second.stderr).not.toContain('UNHANDLED')

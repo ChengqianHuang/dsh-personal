@@ -10,6 +10,7 @@ import { mkdir, open } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { PERSONAL_APPLICATION_ID, migratePersonalDatabase } from './schema.ts'
+import { personalSearchIndex } from './search.ts'
 
 /**
  * Open (creating if missing) the personal database at `path`.
@@ -38,6 +39,7 @@ export async function openPersonalDatabase(path: string): Promise<DatabaseSync> 
     // own database instead of tripping the foreign-tables rejection.
     db.exec(`PRAGMA application_id = ${PERSONAL_APPLICATION_ID}`)
     migratePersonalDatabase(db, actual)
+    personalSearchIndex(db)
     return db
   } catch (error: unknown) {
     db.close()

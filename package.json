@@ -28,7 +28,10 @@
     "@deepseek-ai/schemastery": "*"
   },
   "devDependencies": {
-    "tsdown": "*",
-    "vitest": "*"
+    "tsdown": "^0.22.2",
+    "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "jieba-wasm": "2.4.0"
   }
 }

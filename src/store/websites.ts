@@ -5,11 +5,12 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { WebsiteFilter, WebsiteId, WebsiteRow } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   decodeTags,
   encodeTags,
   normalizeLimit,
@@ -48,7 +49,7 @@ export class WebsiteStore {
   private readonly sql: StatementCache
 
   /** @param db - the opened personal database. */
-  constructor(db: DatabaseSync) {
+  constructor(private readonly db: DatabaseSync) {
     this.sql = new StatementCache(db)
   }
 
@@ -117,17 +118,14 @@ export class WebsiteStore {
   }
 
   /**
-   * Substring-search websites across name, domain, and description.
+   * Keyword-search websites across name, domain, and description.
    * @param text - raw search text.
    * @param limit - row cap.
-   * @returns matching rows.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, limit: number): WebsiteRow[] {
-    const pattern = containsPattern(text)
-    return this.sql.all<WebsiteDbRow>(
-      'SELECT * FROM websites WHERE name LIKE ? ESCAPE \'\\\' OR domain LIKE ? ESCAPE \'\\\' '
-        + 'OR description LIKE ? ESCAPE \'\\\' ORDER BY created_at, id LIMIT ?',
-      pattern, pattern, pattern, limit,
-    ).map(row => WebsiteStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...{}, types: ['website'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as WebsiteRow)
   }
 }

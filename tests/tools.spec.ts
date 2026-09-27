@@ -144,7 +144,7 @@ describe('tool execution', () => {
     expect(byText.count).toBe(1)
 
     const search = await call('search_personal_data', { text: 'blog' })
-    expect(Object.keys(search)).toContain('website')
+    expect((search.hits as Array<{ type: string }>).map(hit => hit.type)).toContain('website')
 
     const review = await call('generate_daily_review', {})
     expect(review).toHaveProperty('date')

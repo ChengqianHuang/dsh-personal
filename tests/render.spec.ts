@@ -228,9 +228,8 @@ describe('tool projections', () => {
       daily_log: { id: 'd', date: '2026-09-26', summary: '小结', rawText: '', createdAt: '' },
       future_type: { id: 'x' },
     }
-    const grouped: Record<string, JsonValue[]> = {}
-    for (const [type, value] of Object.entries(row)) grouped[type] = [value]
-    const text = search.output.render({ text: 'x' }, grouped).filter(block => block.type === 'text').map(block => block.text).join('')
+    const ranked = { terms: ['x'], hits: Object.entries(row).map(([type, value]) => ({ type, score: 1, row: value })) }
+    const text = search.output.render({ text: 'x' }, ranked).filter(block => block.type === 'text').map(block => block.text).join('')
     for (const marker of ['experience:', 'project:', 'project_log:', 'task:', 'blog_post:', 'website:', 'idea:', 'daily_log:', 'future_type:']) {
       expect(text, marker).toContain(marker)
     }

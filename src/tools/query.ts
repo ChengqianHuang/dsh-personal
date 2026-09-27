@@ -10,7 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { PersonalService } from '../index.ts'
-import type { ProjectId, WebsiteId } from '../types.ts'
+import type { ProjectId, WebsiteId, SearchPersonalResult } from '../types.ts'
 import {
   BLOG_POST_STATUSES,
   PERSONAL_TYPES,
@@ -46,12 +46,14 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
     name: 'query_experiences',
     description:
       'List experiences — movies watched, books read, albums listened to, exhibitions visited '
-      + '— newest first. Filter by category, action, title/note text, occurred-date window, or tag. '
+      + '— newest first, or by relevance when text keywords are supplied. Filter by category, '
+      + 'action, title/note/tag keywords, occurred-date window, or tag. '
       + 'Use the same category and action keys returned by record_experience.',
     parameters: {
       category: { type: 'string', description: 'Stored category key, e.g. movie, book, album, exhibition.' },
       action: { type: 'string', description: 'Stored action key, e.g. watched, read, listened, visited.' },
-      text: { type: 'string', description: 'Case-insensitive substring of the title or note.' },
+      text: { type: 'string', description: 'Chinese or English keywords in title, note, or tags; omit for a chronological list.' },
+      match: { type: 'string', enum: ['all', 'any'], description: 'all (default) requires every keyword; any returns partial matches.' },
       ...windowParameters,
       tag: { type: 'string', description: 'Exact tag match, case-insensitive.' },
       limit: limitParameter,
@@ -239,30 +241,33 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
   const searchPersonalData = defineTool({
     name: 'search_personal_data',
     description:
-      'Substring-search across every personal object type — experiences, projects, project logs, '
-      + 'tasks, blog posts, websites, ideas, daily logs — inside an optional date window. '
-      + 'Use it when the question spans types or no dedicated query tool fits.',
+      'Search Chinese/English keywords across experiences, projects, project logs, tasks, '
+      + 'blog posts, websites, ideas, and daily logs, ranked by relevance across types. '
+      + 'Extract subject keywords from the question into text; put dates in the window fields '
+      + 'and object kinds in types. Do not pass a whole conversational question as text. '
+      + 'all (default) requires every keyword; retry with any for broader partial matches. '
+      + 'Search is lexical, not semantic: rephrase synonyms when needed. Use for cross-type '
+      + 'questions or when no dedicated query tool fits.',
     parameters: {
-      text: { type: 'string', required: true, description: 'Text to find, case-insensitive substring.' },
+      text: { type: 'string', required: true, description: 'Subject keywords, e.g. 博客证书 or streaming 中文错位. Chinese is segmented automatically.' },
+      match: { type: 'string', enum: ['all', 'any'], description: 'all (default) matches every keyword; any matches at least one.' },
       types: {
         type: 'array',
         items: { type: 'string', enum: PERSONAL_TYPES },
         description: 'Object types to search; omitted means every type.',
       },
       ...windowParameters,
-      limit: limitParameter,
+      limit: { ...limitParameter, description: 'Global result cap across all selected types; defaults to 20, maximum 200.' },
     },
     output: {
-      schema: { type: 'json', description: 'Matches grouped by object type; empty groups are omitted.' },
+      schema: { type: 'json', description: 'terms plus hits in descending relevance order; each hit has type, score, and a complete row. limit applies globally.' },
       render: (args, value) => textBlock(renderSearchResult(args.text, value)),
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      // Every personal row field is string | number | null | string[], so the
-      // grouped result is JSON-safe by construction; the tool returns it as
-      // its JSON projection.
-      return await service.searchPersonal(args) as JsonValue
+      // Domain rows come from SQLite json_object, with tags decoded as arrays.
+      return await service.searchPersonal(args) as unknown as JsonValue
     },
     presentCall: args => ({ card: 'generic', title: 'Search personal data', kind: 'other', rawInput: args.text }),
   })
@@ -289,19 +294,16 @@ async function requireReference<T extends { id: string }>(
   return found.id
 }
 
-/** Human summary of one search result group. */
+/** Render ranked hits without regrouping away their relevance order. */
 function renderSearchResult(text: string, value: JsonValue): string {
   if (typeof value !== 'object' || value === null) return `Nothing found for ${JSON.stringify(text)}.`
-  const groups = Object.entries(value)
-  if (groups.length === 0) return `Nothing found for ${JSON.stringify(text)}.`
-  const lines: string[] = []
-  for (const [type, rows] of groups) {
-    lines.push(`${type}:`)
-    for (const row of rows as Array<Record<string, unknown>>) {
-      lines.push(`  - ${summarizeRow(type, row)}`)
-    }
-  }
-  return `Found matches for ${JSON.stringify(text)}:\n` + lines.join('\n')
+  const result = value as unknown as SearchPersonalResult
+  if (result.hits.length === 0) return `Nothing found for ${JSON.stringify(text)}.`
+  const lines = result.hits.map((hit, index) =>
+    `${index + 1}. ${hit.type}: ${summarizeRow(hit.type, hit.row as Record<string, unknown>)}\n`
+      + `   Record: ${JSON.stringify(hit.row)}`)
+  return `Found ${result.hits.length} matches for ${JSON.stringify(text)} (relevance order).\n`
+    + `Keywords: ${result.terms.join(', ')}\n` + lines.join('\n')
 }
 
 /** One-line summary of a searched row, keyed by its object type. */

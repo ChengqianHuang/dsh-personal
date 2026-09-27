@@ -6,11 +6,12 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { BlogPostFilter, BlogPostId, BlogPostRow, BlogPostStatus, ProjectId } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   decodeTags,
   encodeTags,
   normalizeLimit,
@@ -61,7 +62,7 @@ export class BlogPostStore {
   private readonly sql: StatementCache
 
   /** @param db - the opened personal database. */
-  constructor(db: DatabaseSync) {
+  constructor(private readonly db: DatabaseSync) {
     this.sql = new StatementCache(db)
   }
 
@@ -156,26 +157,15 @@ export class BlogPostStore {
   }
 
   /**
-   * Substring-search posts across title, summary, and content.
+   * Keyword-search posts across title, summary, and content.
    * @param text - raw search text.
    * @param win - inclusive creation-window bounds.
    * @param limit - row cap.
-   * @returns matching rows, newest first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): BlogPostRow[] {
-    const pattern = containsPattern(text)
-    const { where, params } = whereClause([
-      windowClauses('created_at', 'datetime', win),
-      {
-        clauses: [
-          '(title LIKE ? ESCAPE \'\\\' OR summary LIKE ? ESCAPE \'\\\' OR content LIKE ? ESCAPE \'\\\')',
-        ],
-        params: [pattern, pattern, pattern],
-      },
-    ])
-    return this.sql.all<BlogPostDbRow>(
-      `SELECT * FROM blog_posts ${where} ORDER BY created_at DESC, id DESC LIMIT ?`,
-      ...params, limit,
-    ).map(row => BlogPostStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['blog_post'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as BlogPostRow)
   }
 }
