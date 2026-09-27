@@ -7,6 +7,7 @@
 import { validateTimeZone } from './dates.ts'
 import { expandHomePath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { resolve } from 'node:path'
+import type { SearchWeights } from './types.ts'
 
 /** Directory under the Harness home holding the personal database. */
 export const PERSONAL_HOME_SEGMENT = 'personal'
@@ -30,6 +31,12 @@ export interface Config {
    * dates) is computed in. Defaults to the process zone.
    */
   timezone?: string
+  /** Positive BM25 title weight; defaults to 5. */
+  searchTitleWeight?: number
+  /** Positive BM25 tag weight; defaults to 3. */
+  searchTagWeight?: number
+  /** Positive BM25 note/content weight; defaults to 1. */
+  searchBodyWeight?: number
 }
 
 /** Resolved deployment settings produced once at plugin start. */
@@ -38,6 +45,7 @@ export interface PersonalSettings {
   enableDailyReview: boolean
   enableWeeklyReview: boolean
   timeZone: string | undefined
+  searchWeights: SearchWeights
 }
 
 /**
@@ -58,7 +66,21 @@ export function resolvePersonalConfig(config: Config): PersonalSettings {
     enableDailyReview: config.enableDailyReview ?? true,
     enableWeeklyReview: config.enableWeeklyReview ?? true,
     timeZone: validateTimeZone(config.timezone),
+    searchWeights: resolveSearchWeights(config),
   }
+}
+
+/**
+ * Resolve positive finite BM25 weights for every search entry point.
+ * @param config - optional deployment weights.
+ * @returns title, tag, and body weights.
+ */
+export function resolveSearchWeights(config: Config): SearchWeights {
+  const weights = { title: config.searchTitleWeight ?? 5, tags: config.searchTagWeight ?? 3, body: config.searchBodyWeight ?? 1 }
+  for (const [field, value] of Object.entries(weights)) {
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`dsh-personal: search ${field} weight must be a positive finite number`)
+  }
+  return weights
 }
 
 /**

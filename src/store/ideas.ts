@@ -5,12 +5,13 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { resolveWindow } from '../dates.ts'
 import type { DailyLogFilter, DailyLogId, DailyLogRow, IdeaFilter, IdeaId, IdeaRow, ProjectId } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   normalizeLimit,
   whereClause,
   windowClauses,
@@ -59,7 +60,7 @@ export class IdeaStore {
   private readonly sql: StatementCache
 
   /** @param db - the opened personal database. */
-  constructor(db: DatabaseSync) {
+  constructor(private readonly db: DatabaseSync) {
     this.sql = new StatementCache(db)
   }
 
@@ -128,22 +129,16 @@ export class IdeaStore {
   }
 
   /**
-   * Substring-search ideas across title and content.
+   * Keyword-search ideas across title and content.
    * @param text - raw search text.
    * @param win - inclusive creation-window bounds.
    * @param limit - row cap.
-   * @returns matching rows, newest first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): IdeaRow[] {
-    const pattern = containsPattern(text)
-    const { where, params } = whereClause([
-      windowClauses('created_at', 'datetime', win),
-      { clauses: ['(title LIKE ? ESCAPE \'\\\' OR content LIKE ? ESCAPE \'\\\')'], params: [pattern, pattern] },
-    ])
-    return this.sql.all<IdeaDbRow>(
-      `SELECT * FROM ideas ${where} ORDER BY created_at DESC, id DESC LIMIT ?`,
-      ...params, limit,
-    ).map(row => IdeaStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['idea'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as IdeaRow)
   }
 }
 
@@ -156,7 +151,7 @@ export class DailyLogStore {
    * @param timeZone - IANA zone resolving filter windows.
    */
   constructor(
-    db: DatabaseSync,
+    private readonly db: DatabaseSync,
     private readonly timeZone: string | undefined,
   ) {
     this.sql = new StatementCache(db)
@@ -222,21 +217,15 @@ export class DailyLogStore {
   }
 
   /**
-   * Substring-search logs across summary and raw text within a window.
+   * Keyword-search logs across summary and raw text within a window.
    * @param text - raw search text.
    * @param win - inclusive window bounds.
    * @param limit - row cap.
-   * @returns matching rows, newest date first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): DailyLogRow[] {
-    const pattern = containsPattern(text)
-    const { where, params } = whereClause([
-      windowClauses('date', 'date', win),
-      { clauses: ['(summary LIKE ? ESCAPE \'\\\' OR raw_text LIKE ? ESCAPE \'\\\')'], params: [pattern, pattern] },
-    ])
-    return this.sql.all<DailyLogDbRow>(
-      `SELECT * FROM daily_logs ${where} ORDER BY date DESC, id DESC LIMIT ?`,
-      ...params, limit,
-    ).map(row => DailyLogStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['daily_log'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as DailyLogRow)
   }
 }

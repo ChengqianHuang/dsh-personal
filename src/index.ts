@@ -22,7 +22,6 @@ declare module '@deepseek-ai/cordis' {
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
 import z from '@deepseek-ai/schemastery'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { resolvePersonalConfig, type Config, type PersonalSettings } from './config.ts'
 import { addDays, assertDayOffset, assertIsoDate, resolveDueDate, resolveWindow, todayIso } from './dates.ts'
 import { buildDailyReview, buildWeeklyReview, type ReviewStores } from './review.ts'
@@ -30,8 +29,9 @@ import { BlogPostStore } from './store/blogs.ts'
 import { mintId } from './store/ids.ts'
 import { DailyLogStore, IdeaStore } from './store/ideas.ts'
 import { ExperienceStore } from './store/experiences.ts'
-import { normalizeLimit, nowIso, withTransaction } from './store/statements.ts'
+import { nowIso, withTransaction } from './store/statements.ts'
 import { openPersonalDatabase } from './store/open.ts'
+import { personalSearchIndex } from './store/search.ts'
 import { ProjectLogStore, ProjectStore } from './store/projects.ts'
 import { RelationStore } from './store/relations.ts'
 import { TaskStore } from './store/tasks.ts'
@@ -98,6 +98,9 @@ export class PersonalService extends Service {
     enableDailyReview: z.boolean().default(true),
     enableWeeklyReview: z.boolean().default(true),
     timezone: z.string(),
+    searchTitleWeight: z.number(),
+    searchTagWeight: z.number(),
+    searchBodyWeight: z.number(),
   })
 
   private db: DatabaseSync | undefined
@@ -551,6 +554,7 @@ export class PersonalService extends Service {
   async queryExperiences(filter: ExperienceFilter): Promise<ExperienceRow[]> {
     return (await this.ready()).experiences.list({
       ...filter,
+      weights: this.settings.searchWeights,
       ...(filter.category === undefined ? {} : { category: this.required(filter.category, 'experience category') }),
       ...(filter.action === undefined ? {} : { action: this.required(filter.action, 'experience action') }),
       ...(filter.text === undefined ? {} : { text: this.required(filter.text, 'experience text') }),
@@ -622,32 +626,19 @@ export class PersonalService extends Service {
   }
 
   /**
-   * Substring-search every object type (or a selected subset) inside a date
-   * window; every fact is read from SQLite.
-   * @param input - search text, optional type subset, and window.
-   * @returns matches grouped by type; empty groups are omitted.
+   * Search segmented keywords across selected types within a date window.
+   * Every result comes from SQLite and shares one BM25 relevance order.
+   * @param input - keywords, match mode, type subset, window, and global limit.
+   * @returns query terms and ranked domain rows.
    */
   async searchPersonal(input: SearchPersonalInput): Promise<SearchPersonalResult> {
     const bundle = await this.ready()
     const win = resolveWindow(input, this.settings.timeZone)
     const text = this.required(input.text, 'search text')
-    const limit = normalizeLimit(input.limit)
-    const wanted = (type: PersonalObjectType): boolean => input.types === undefined || input.types.includes(type)
-    const result: SearchPersonalResult = {}
-    const include = (type: PersonalObjectType, rows: unknown[]): void => {
-      // Row fields are string | number | null | string[], so the projection
-      // is JSON-safe by construction.
-      if (wanted(type) && rows.length > 0) result[type] = rows as JsonValue[]
-    }
-    include('experience', bundle.experiences.searchText(text, win, limit))
-    include('project', bundle.projects.searchText(text, limit))
-    include('project_log', bundle.projectLogs.searchText(text, win, limit))
-    include('task', bundle.tasks.searchText(text, win, limit))
-    include('blog_post', bundle.blogPosts.searchText(text, win, limit))
-    include('website', bundle.websites.searchText(text, limit))
-    include('idea', bundle.ideas.searchText(text, win, limit))
-    include('daily_log', bundle.dailyLogs.searchText(text, win, limit))
-    return result
+    return personalSearchIndex(bundle.db).search({
+      text, ...win, types: input.types, match: input.match,
+      limit: input.limit, weights: this.settings.searchWeights,
+    })
   }
 
   /**

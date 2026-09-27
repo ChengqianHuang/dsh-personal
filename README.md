@@ -34,6 +34,7 @@ pnpm dsh web                                       # 启动后直接对话
 ## 构建 / 测试
 
 ```sh
+(cd dsh-personal && pnpm install --ignore-workspace --config.auto-install-peers=false)
 (cd dsh-personal && pnpm exec tsdown)                    # 产出 lib/index.mjs
 pnpm exec vitest run --config dsh-personal/vitest.config.ts
 pnpm exec tsc -p dsh-personal/tsconfig.json --noEmit
@@ -51,3 +52,25 @@ pnpm exec tsc -p dsh-personal/tsconfig.json --noEmit
 - 回顾：`generate_daily_review` `generate_weekly_review`
 
 用法示例：直接说「今天看了《灵媒》，7.5 分」「读了半本《失控》」「Forge 今天定位了中文错位问题」「周末检查博客证书」「我有哪些事情没做？」「本周回顾」。
+
+## 关键词检索
+
+`search_personal_data` 使用 Jieba 中文分词和 SQLite FTS5，跨八类记录按 BM25 相关性统一排序。标题、名称、域名默认比备注和正文权重更高；标签也参与检索。比如「博客证书」可以找到「检查博客的 HTTPS 证书」，「streaming 中文错位」可以组合中英文关键词。
+
+- `text`：主题关键词。模型从问题中提取关键词，把时间和类型分别填进日期窗口与 `types`。
+- `match`：默认 `all`，要求全部关键词；`any` 返回至少命中一个词的记录。
+- `types`、`from`、`to`、`period`：按记录类型与日期过滤；项目、网站也使用创建日期过滤。
+- `limit`：跨类型的总条数，默认 20，上限 200。返回 `{ terms, hits }`，每条 hit 包含 `type`、`score` 和完整 `row`，保持相关性顺序；分数只在本次查询内可比。同分时按日期倒序、类型、id 排列。
+- `query_experiences` 的 `text` 和 `match` 使用同一检索引擎，还能组合类别、动作、日期和标签。不带 `text` 时仍按日期列出经历。
+
+搜索索引只存在于连接的内存 TEMP 表中，不改变 v4 数据库格式。首次搜索从现有记录建立索引，本连接的写入、修改和删除通过 TEMP trigger 同步；其他连接提交变更后，下次搜索在一致的读取事务里重建。关闭连接会释放索引，重启后从数据库恢复。大量记录或频繁跨进程写入时，重建会增加首次搜索延迟。
+
+权重可在插件配置中调整，均须为正的有限数：
+
+```yaml
+searchTitleWeight: 5
+searchTagWeight: 3
+searchBodyWeight: 1
+```
+
+这是词法检索，支持中文复合词的子词，但不保证任意字符片段或同义词匹配；「看展」与「参观展览」仍可能需要模型换关键词查询。没有向量检索或自动语义扩展。

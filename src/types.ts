@@ -317,8 +317,10 @@ export interface ExperienceFilter extends DateWindowFilter {
   category?: string
   /** What was done, e.g. watched, read, listened, visited. */
   action?: string
-  /** Case-insensitive substring match on the title or note. */
+  /** Segmented keywords; results with text are ordered by relevance. */
   text?: string
+  /** Match all keywords by default; any returns partial keyword matches. */
+  match?: 'all' | 'any'
   /** Case-insensitive exact tag match. */
   tag?: string
   limit?: number
@@ -372,15 +374,36 @@ export interface DailyLogFilter extends DateWindowFilter {
 
 /** Text search across all personal object types. */
 export interface SearchPersonalInput extends DateWindowFilter {
-  /** Case-insensitive substring searched across each type's text columns. */
+  /** Chinese or Latin keywords, segmented and matched case-insensitively. */
   text: string
+  /** Match all keywords by default; any broadens to partial matches. */
+  match?: 'all' | 'any'
   /** Object types to search; omitted means every type. */
   types?: PersonalObjectType[]
+  /** Global cap across every selected object type. */
   limit?: number
 }
 
-/** Search results grouped by object type; rows are JSON-safe domain projections. */
-export type SearchPersonalResult = Partial<Record<PersonalObjectType, JsonValue[]>>
+/** Positive BM25 field weights resolved from plugin configuration. */
+export interface SearchWeights {
+  title: number
+  tags: number
+  body: number
+}
+
+/** One search hit, in descending relevance order. */
+export interface PersonalSearchHit {
+  type: PersonalObjectType
+  /** Positive relevance strength; comparisons apply only within this query. */
+  score: number
+  row: JsonValue
+}
+
+/** Query terms and globally ranked, JSON-safe domain records. */
+export interface SearchPersonalResult {
+  terms: string[]
+  hits: PersonalSearchHit[]
+}
 
 /** One project's logs inside a daily review. */
 export interface DailyReviewWork {

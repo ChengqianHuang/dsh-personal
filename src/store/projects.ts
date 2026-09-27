@@ -6,12 +6,13 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { resolveWindow } from '../dates.ts'
 import type { ProjectId, ProjectLogFilter, ProjectLogId, ProjectLogRow, ProjectLogStatus, ProjectRow, ProjectStatus } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   decodeTags,
   encodeTags,
   normalizeLimit,
@@ -70,7 +71,7 @@ export class ProjectStore {
   private readonly sql: StatementCache
 
   /** @param db - the opened personal database. */
-  constructor(db: DatabaseSync) {
+  constructor(private readonly db: DatabaseSync) {
     this.sql = new StatementCache(db)
   }
 
@@ -135,18 +136,15 @@ export class ProjectStore {
   }
 
   /**
-   * Substring-search projects across name and description.
+   * Keyword-search projects across name and description.
    * @param text - raw search text.
    * @param limit - row cap.
-   * @returns matching rows.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, limit: number): ProjectRow[] {
-    const pattern = containsPattern(text)
-    return this.sql.all<ProjectDbRow>(
-      'SELECT * FROM projects WHERE name LIKE ? ESCAPE \'\\\' OR description LIKE ? ESCAPE \'\\\' '
-        + 'ORDER BY created_at, id LIMIT ?',
-      pattern, pattern, limit,
-    ).map(row => ProjectStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...{}, types: ['project'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as ProjectRow)
   }
 }
 
@@ -159,7 +157,7 @@ export class ProjectLogStore {
    * @param timeZone - IANA zone resolving filter windows.
    */
   constructor(
-    db: DatabaseSync,
+    private readonly db: DatabaseSync,
     private readonly timeZone: string | undefined,
   ) {
     this.sql = new StatementCache(db)
@@ -224,21 +222,15 @@ export class ProjectLogStore {
   }
 
   /**
-   * Substring-search logs across title and content within a window.
+   * Keyword-search logs across title and content within a window.
    * @param text - raw search text.
    * @param win - inclusive window bounds.
    * @param limit - row cap.
-   * @returns matching rows, newest first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): ProjectLogRow[] {
-    const pattern = containsPattern(text)
-    const { where, params } = whereClause([
-      windowClauses('date', 'date', win),
-      { clauses: ['(title LIKE ? ESCAPE \'\\\' OR content LIKE ? ESCAPE \'\\\')'], params: [pattern, pattern] },
-    ])
-    return this.sql.all<ProjectLogDbRow>(
-      `SELECT * FROM project_logs ${where} ORDER BY date DESC, id DESC LIMIT ?`,
-      ...params, limit,
-    ).map(row => ProjectLogStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['project_log'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as ProjectLogRow)
   }
 }

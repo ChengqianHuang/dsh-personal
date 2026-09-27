@@ -7,12 +7,13 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { resolveWindow } from '../dates.ts'
-import type { ExperienceFilter, ExperienceId, ExperienceRow } from '../types.ts'
+import type { ExperienceFilter, ExperienceId, ExperienceRow, SearchWeights } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   decodeTags,
   encodeTags,
   normalizeLimit,
@@ -68,7 +69,7 @@ export class ExperienceStore {
    * @param timeZone - IANA zone resolving filter windows.
    */
   constructor(
-    db: DatabaseSync,
+    private readonly db: DatabaseSync,
     private readonly timeZone: string | undefined,
   ) {
     this.sql = new StatementCache(db)
@@ -115,13 +116,21 @@ export class ExperienceStore {
 
   /**
    * List experiences by canonical category, action, occurred-date window,
-   * text, and tag, newest experience first.
+   * text, and tag; text searches use relevance order, other lists use date order.
    * @param filter - query filter.
    * @returns matching rows.
    */
-  list(filter: ExperienceFilter): ExperienceRow[] {
+  list(filter: ExperienceFilter & { weights?: SearchWeights }): ExperienceRow[] {
     const limit = normalizeLimit(filter.limit)
     const win = resolveWindow(filter, this.timeZone)
+    if (filter.text !== undefined) {
+      return personalSearchIndex(this.db).search({
+        text: filter.text, ...win, types: ['experience'], match: filter.match,
+        category: filter.category === undefined ? undefined : normalizeCategoryAction(filter.category),
+        action: filter.action === undefined ? undefined : normalizeCategoryAction(filter.action),
+        tag: filter.tag, limit, weights: filter.weights ?? resolveSearchWeights({}),
+      }).hits.map(hit => hit.row as unknown as ExperienceRow)
+    }
     const parts: Array<{ clauses: string[]; params: SupportedValue[] }> = []
     if (filter.category !== undefined) {
       parts.push({
@@ -135,7 +144,6 @@ export class ExperienceStore {
         params: [normalizeCategoryAction(filter.action)],
       })
     }
-    if (filter.text !== undefined) parts.push(experienceTextClause(filter.text))
     const { where, params } = whereClause([
       ...parts,
       windowClauses('occurred_on', 'date', win),
@@ -149,30 +157,15 @@ export class ExperienceStore {
   }
 
   /**
-   * Substring-search experiences across title and note within a window.
+   * Keyword-search experiences across title, note, and tags within a window.
    * @param text - raw search text.
    * @param win - inclusive window bounds.
    * @param limit - row cap.
-   * @returns matching rows, newest experience first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): ExperienceRow[] {
-    const { where, params } = whereClause([
-      windowClauses('occurred_on', 'date', win),
-      experienceTextClause(text),
-    ])
-    const raws = this.sql.all<ExperienceDbRow>(
-      `SELECT * FROM experiences ${where} ORDER BY occurred_on DESC, id DESC LIMIT ?`,
-      ...params, limit,
-    )
-    return raws.map(row => ExperienceStore.toRow(row))
-  }
-}
-
-/** Search the two free-text experience fields without treating caller text as SQL. */
-function experienceTextClause(text: string): { clauses: string[]; params: SupportedValue[] } {
-  const pattern = containsPattern(text)
-  return {
-    clauses: ['(title LIKE ? ESCAPE \'\\\' OR note LIKE ? ESCAPE \'\\\')'],
-    params: [pattern, pattern],
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['experience'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as ExperienceRow)
   }
 }

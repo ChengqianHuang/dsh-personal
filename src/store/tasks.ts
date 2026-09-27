@@ -6,6 +6,8 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite'
+import { personalSearchIndex } from './search.ts'
+import { resolveSearchWeights } from '../config.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { todayIso, weekRangeOf } from '../dates.ts'
 import type {
@@ -20,7 +22,6 @@ import type {
 } from '../types.ts'
 import {
   StatementCache,
-  containsPattern,
   normalizeLimit,
   nowIso,
   updateAssignments,
@@ -76,7 +77,7 @@ export class TaskStore {
    * @param timeZone - IANA zone stamping completion dates and resolving due filters.
    */
   constructor(
-    db: DatabaseSync,
+    private readonly db: DatabaseSync,
     private readonly timeZone: string | undefined,
   ) {
     this.sql = new StatementCache(db)
@@ -233,23 +234,16 @@ export class TaskStore {
   }
 
   /**
-   * Substring-search tasks across title.
+   * Keyword-search tasks across title.
    * @param text - raw search text.
    * @param win - window bounds; tasks compare on their due date.
    * @param limit - row cap.
-   * @returns matching rows, soonest due first.
+   * @returns matching rows in relevance order.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): TaskRow[] {
-    const pattern = containsPattern(text)
-    const { where, params } = whereClause([
-      windowClauses('due_at', 'date', win),
-      { clauses: ['title LIKE ? ESCAPE \'\\\''], params: [pattern] },
-    ])
-    const raws = this.sql.all<TaskDbRow>(
-      `SELECT * FROM tasks ${where} ORDER BY due_at IS NULL, due_at, id LIMIT ?`,
-      ...params, limit,
-    )
-    return raws.map(row => TaskStore.toRow(row))
+    return personalSearchIndex(this.db).search({
+      text, ...win, types: ['task'], limit, weights: resolveSearchWeights({}),
+    }).hits.map(hit => hit.row as unknown as TaskRow)
   }
 
   /** Due-window clauses for one {@link TaskDueFilter}, resolved against today. */

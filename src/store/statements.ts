@@ -106,15 +106,6 @@ export function decodeTags(value: string): string[] {
 }
 
 /**
- * Escape SQL `LIKE` metacharacters in caller text.
- * @param text - raw search text.
- * @returns text safe to embed in a `LIKE ? ESCAPE '\'` pattern.
- */
-export function escapeLike(text: string): string {
-  return text.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
-}
-
-/**
  * Run one synchronous write sequence inside a single `BEGIN IMMEDIATE`
  * transaction, rolling back on any throw. The callback must not await: the
  * service performs all awaits before entering the transaction, so in-process
@@ -139,15 +130,6 @@ export function withTransaction<T>(db: DatabaseSync, work: () => T): T {
     }
     throw error
   }
-}
-
-/**
- * Build a case-insensitive substring pattern for `LIKE ? ESCAPE '\'`.
- * @param text - raw search text.
- * @returns the wrapped, escaped pattern.
- */
-export function containsPattern(text: string): string {
-  return `%${escapeLike(text)}%`
 }
 
 /**
