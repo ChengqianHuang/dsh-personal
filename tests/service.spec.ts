@@ -42,10 +42,15 @@ describe('capture and mutation', () => {
     const quarter = await svc.queryExperiences({})
     expect(quarter.find(row => row.title === '沙丘 2')?.rating).toBe(7.5)
     expect((await svc.recordExperience({ category: 'book', action: 'read', title: 'x', rating: 8.25 })).rating).toBe(8.25)
+    await expect(svc.recordExperience({ category: '   ', action: 'watched', title: 'x' })).rejects.toThrow('experience category')
+    await expect(svc.recordExperience({ category: 'movie', action: '   ', title: 'x' })).rejects.toThrow('experience action')
     await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: '   ' })).rejects.toThrow('experience title')
     await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', rating: 11 })).rejects.toThrow('rating')
     await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', rating: Number.NaN })).rejects.toThrow('rating')
     await expect(svc.recordExperience({ category: 'movie', action: 'watched', title: 'x', occurredOn: '2026-02-30' })).rejects.toThrow('occurredOn')
+    expect((await svc.queryExperiences({ category: 'movie', text: '沙丘' })).map(row => row.title)).toEqual(['沙丘 2'])
+    await expect(svc.queryExperiences({ category: ' ' })).rejects.toThrow('experience category')
+    await expect(svc.queryExperiences({ text: ' ' })).rejects.toThrow('experience text')
   })
 
   it('rejects future occurred_on dates and points planned items at tasks', async () => {
@@ -77,14 +82,26 @@ describe('capture and mutation', () => {
     const svc = await service()
     const first = await svc.recordProjectLog({ project: 'Forge', title: '定位了中文错位问题' })
     expect(first.project.name).toBe('Forge')
+    expect(first.projectCreated).toBe(true)
     expect(first.log.date).toBe(todayIso('UTC'))
     const second = await svc.recordProjectLog({
       project: 'Forge', title: '修完了', date: '2026-09-25', status: 'WIP', tags: ['fix'],
     })
     expect(second.project.id).toBe(first.project.id)
+    expect(second.projectCreated).toBe(false)
     expect(second.log).toMatchObject({ date: '2026-09-25', status: 'WIP', tags: ['fix'] })
     const logs = await svc.queryProjectLogs({ project: 'forge' })
     expect(logs.map(row => row.title)).toEqual(['定位了中文错位问题', '修完了'])
+  })
+
+  it('reports exactly one creator for concurrent logs on a new project', async () => {
+    const svc = await service()
+    const results = await Promise.all([
+      svc.recordProjectLog({ project: 'Shared', title: 'First' }),
+      svc.recordProjectLog({ project: 'Shared', title: 'Second' }),
+    ])
+    expect(results.map(result => result.projectCreated).sort()).toEqual([false, true])
+    expect(results[0]!.project.id).toBe(results[1]!.project.id)
   })
 
   it('creates tasks with due dates, links, and relations', async () => {

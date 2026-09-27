@@ -140,6 +140,8 @@ describe('tool execution', () => {
 
     const experiences = await call('query_experiences', { period: 'this-month' })
     expect(experiences.count).toBe(1)
+    const byText = await call('query_experiences', { category: 'movie', text: '灵媒' })
+    expect(byText.count).toBe(1)
 
     const search = await call('search_personal_data', { text: 'blog' })
     expect(Object.keys(search)).toContain('website')

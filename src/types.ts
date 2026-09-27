@@ -311,12 +311,14 @@ export interface DateWindowFilter {
   period?: QueryPeriod
 }
 
-/** Experience query filter; category and action accept singular or plural words. */
+/** Experience query filter; category and action use the keys stored on records. */
 export interface ExperienceFilter extends DateWindowFilter {
   /** Object category, e.g. movie, book, album, exhibition. */
   category?: string
   /** What was done, e.g. watched, read, listened, visited. */
   action?: string
+  /** Case-insensitive substring match on the title or note. */
+  text?: string
   /** Case-insensitive exact tag match. */
   tag?: string
   limit?: number

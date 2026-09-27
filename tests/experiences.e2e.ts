@@ -58,9 +58,9 @@ const CAPTURE_TASKS = [
   '今天看了《灵媒》，7.5 分。',
   '读完了《失控》的第一章，8 分。',
   '听了 Daft Punk 的《Random Access Memories》，这张专辑太棒了。',
-  '周末去看了teamLab的展览。',
-  'Forge 今天把 Pi MiniMax streaming 中文错位问题定位清楚了。',
-  '周末看《沙丘 3》。',
+  '昨天参观了 teamLab 展览。',
+  '今天：Forge 修复了登录错位；看了《火星救援》，8.5 分；明天检查博客证书。',
+  '下周末看《沙丘 3》。',
   '我最近看了哪些电影？',
   '我最近读过什么书？',
   'Forge 最近都做了什么？',
@@ -183,11 +183,11 @@ describe.skipIf(route === undefined || !existsSync(join(HOME, '.credentials.yaml
       const experiences = db.prepare(
         'SELECT category, action, title, rating FROM experiences ORDER BY category',
       ).all() as Array<{ category: string; action: string; title: string; rating: number | null }>
-      const byCategory = new Map(experiences.map(row => [row.category, row]))
-      expect(byCategory.get('movie')).toMatchObject({ action: 'watched', title: '灵媒', rating: 7.5 })
-      expect(byCategory.get('book')).toMatchObject({ action: 'read', title: '失控' })
-      expect(byCategory.get('album')).toMatchObject({ action: 'listened' })
-      expect(byCategory.get('exhibition')).toMatchObject({ action: 'visited' })
+      expect(experiences.find(row => row.title === '灵媒')).toMatchObject({ category: 'movie', action: 'watched', rating: 7.5 })
+      expect(experiences.find(row => row.title === '火星救援')).toMatchObject({ category: 'movie', action: 'watched', rating: 8.5 })
+      expect(experiences.find(row => row.category === 'book')).toMatchObject({ action: 'read', title: '失控' })
+      expect(experiences.find(row => row.category === 'album')).toMatchObject({ action: 'listened' })
+      expect(experiences.find(row => row.category === 'exhibition')).toMatchObject({ action: 'visited' })
 
       // Planned items are tasks, not experiences.
       const plannedTask = db.prepare(
@@ -197,8 +197,9 @@ describe.skipIf(route === undefined || !existsSync(join(HOME, '.credentials.yaml
       expect(plannedTask[0]!.status).toBe('TODO')
       expect(db.prepare("SELECT COUNT(*) AS n FROM experiences WHERE title LIKE '%沙丘 3%'").get()).toEqual({ n: 0 })
 
-      // Mixed input wrote its project log and no spurious daily log.
-      expect(db.prepare("SELECT COUNT(*) AS n FROM project_logs WHERE title LIKE '%中文错位%'").get()).toEqual({ n: 1 })
+      // One mixed message wrote work, an experience, and a task without a daily log.
+      expect(db.prepare("SELECT COUNT(*) AS n FROM project_logs WHERE title LIKE '%登录错位%'").get()).toEqual({ n: 1 })
+      expect(db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE title LIKE '%证书%'").get()).toEqual({ n: 1 })
       expect(db.prepare('SELECT COUNT(*) AS n FROM daily_logs').get()).toEqual({ n: 0 })
     } finally {
       db.close()

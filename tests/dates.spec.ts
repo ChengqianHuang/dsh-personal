@@ -14,11 +14,11 @@ import {
 
 describe('ISO date validation', () => {
   it('accepts real calendar dates and rejects malformed or impossible ones', () => {
-    expect(assertIsoDate('2026-09-26', 'watchedAt')).toBe('2026-09-26')
-    expect(() => assertIsoDate('2026-9-26', 'watchedAt')).toThrow('watchedAt')
-    expect(() => assertIsoDate('2026-13-01', 'watchedAt')).toThrow('watchedAt')
-    expect(() => assertIsoDate('2026-02-30', 'watchedAt')).toThrow('watchedAt')
-    expect(() => assertIsoDate('not-a-date', 'watchedAt')).toThrow('watchedAt')
+    expect(assertIsoDate('2026-09-26', 'occurredOn')).toBe('2026-09-26')
+    expect(() => assertIsoDate('2026-9-26', 'occurredOn')).toThrow('occurredOn')
+    expect(() => assertIsoDate('2026-13-01', 'occurredOn')).toThrow('occurredOn')
+    expect(() => assertIsoDate('2026-02-30', 'occurredOn')).toThrow('occurredOn')
+    expect(() => assertIsoDate('not-a-date', 'occurredOn')).toThrow('occurredOn')
   })
 
   it('rejects negative or fractional day offsets', () => {

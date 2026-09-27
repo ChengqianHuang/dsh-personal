@@ -47,7 +47,7 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     name: 'record_experience',
     description:
       'Record something the user already experienced: a movie watched, a book read, an album '
-      + 'listened to, an exhibition visited. category and action are lowercase singular words '
+      + 'listened to, an exhibition visited. Use lowercase category keys and past-tense action keys '
       + '(category: movie, book, album, exhibition, ...; action: watched, read, listened, '
       + 'visited, ...). Only for things that already happened — planned items go to '
       + 'create_task. occurred_on defaults to today; pass exactly what the user said and '
@@ -61,7 +61,7 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
       action: {
         type: 'string',
         required: true,
-        description: 'What was done, lowercase singular: watched, read, listened, visited, ...',
+        description: 'What was done, lowercase past tense: watched, read, listened, visited, ...',
       },
       title: { type: 'string', required: true, description: 'Name of the experienced thing, e.g. the movie or book title.' },
       rating: { type: 'number', description: 'User rating 0-10; decimals like 7.5 are stored as given.' },
@@ -148,9 +148,8 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      const existing = await service.findProject(args.project)
-      const { log } = await service.recordProjectLog(args)
-      return { log, projectCreated: existing === undefined }
+      const { log, projectCreated } = await service.recordProjectLog(args)
+      return { log, projectCreated }
     },
     presentCall: args => ({ card: 'generic', title: 'Record project log', kind: 'other', rawInput: args.title }),
   })

@@ -34,15 +34,19 @@ pnpm dsh web                                       # 启动后直接对话
 ## 构建 / 测试
 
 ```sh
-cd dsh-personal && npx tsdown        # 产出 lib/index.mjs（bundle 入口）
-npx vitest run --config dsh-personal/vitest.config.ts   # 64 项测试（在 dsh 仓库根运行）
+(cd dsh-personal && pnpm exec tsdown)                    # 产出 lib/index.mjs
+pnpm exec vitest run --config dsh-personal/vitest.config.ts
+pnpm exec tsc -p dsh-personal/tsconfig.json --noEmit
 ```
 
-修改源码后重新 `npx tsdown` 即可（profile 里是 link，指向本目录）。
+修改源码后重新 `pnpm exec tsdown` 即可（profile 里是 link，指向本目录）。
+类型检查读取 DSH 各依赖包的声明文件；首次运行前需先构建上层 DSH 仓库。
+
+当前数据库 schema 版本为 4。旧 v1–v3 数据库无法直接打开；如不需要旧数据，移走或删除旧 `personal.db` 后再启动。插件不会自动删除数据库文件。
 
 ## 工具（19 个）
 
-- 记录：`record_experience`（任意经历类别：movie/book/album/exhibition/…，新增类别无需改代码）`create_project` `record_project_log` `create_task` `update_task` `complete_task` `create_blog_post` `update_blog_post` `create_idea` `record_daily_log` `register_website`
+- 记录：`record_experience`（类别可新增，如 movie/book/album/exhibition）`create_project` `record_project_log` `create_task` `update_task` `complete_task` `create_blog_post` `update_blog_post` `create_idea` `record_daily_log` `register_website`
 - 查询：`query_experiences` `query_tasks` `query_project_logs` `query_blog_posts` `query_websites` `search_personal_data`
 - 回顾：`generate_daily_review` `generate_weekly_review`
 
