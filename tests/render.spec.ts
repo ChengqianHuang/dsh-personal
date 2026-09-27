@@ -94,7 +94,10 @@ describe('tool projections', () => {
     }
 
     // Half-point ratings display as stored.
-    expect(renderExperience({ action: 'watched', title: '沙丘 2', rating: 7.5, tags: [] })).toContain('watched 沙丘 2 7.5/10')
+    expect(renderExperience({
+      category: 'movie', action: 'watched', title: '沙丘 2', occurredOn: '2026-09-25',
+      rating: 7.5, note: '视觉出色', tags: [],
+    })).toBe('2026-09-25 [movie] watched 沙丘 2 7.5/10 — 视觉出色')
 
     // The update tools run once their target ids exist.
     const updates: Record<string, Record<string, unknown>> = {
@@ -215,7 +218,7 @@ describe('tool projections', () => {
     const service = new PersonalService(new Context(), { databasePath: join(root, 'personal.db'), timezone: 'UTC' })
     const search = createQueryTools(service).find(tool => tool.name === 'search_personal_data')!
     const row = {
-      movie: { id: 'm', title: '灵媒', watchedAt: '2026-09-26', rating: 7, note: '', tags: [], createdAt: '', updatedAt: '' },
+      experience: { id: 'm', category: 'movie', action: 'watched', title: '灵媒', occurredOn: '2026-09-26', rating: 7, note: '恐怖片', tags: [], createdAt: '' },
       project: { id: 'p', name: 'Forge', description: '', status: 'ACTIVE', createdAt: '', updatedAt: '' },
       project_log: { id: 'l', projectId: 'p', date: '2026-09-26', title: '定位', content: '', status: 'DONE', tags: [], createdAt: '' },
       task: { id: 't', title: '证书', status: 'TODO', priority: 'HIGH', dueAt: null, doneAt: null, projectId: null, websiteId: null, sourceType: null, sourceId: null, createdAt: '', updatedAt: '' },
@@ -228,9 +231,10 @@ describe('tool projections', () => {
     const grouped: Record<string, JsonValue[]> = {}
     for (const [type, value] of Object.entries(row)) grouped[type] = [value]
     const text = search.output.render({ text: 'x' }, grouped).filter(block => block.type === 'text').map(block => block.text).join('')
-    for (const marker of ['movie:', 'project:', 'project_log:', 'task:', 'blog_post:', 'website:', 'idea:', 'daily_log:', 'future_type:']) {
+    for (const marker of ['experience:', 'project:', 'project_log:', 'task:', 'blog_post:', 'website:', 'idea:', 'daily_log:', 'future_type:']) {
       expect(text, marker).toContain(marker)
     }
+    expect(text).toContain('2026-09-26 [movie] watched 灵媒 7/10 — 恐怖片')
     service.close()
   })
 

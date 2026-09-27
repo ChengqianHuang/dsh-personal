@@ -46,11 +46,12 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
     name: 'query_experiences',
     description:
       'List experiences — movies watched, books read, albums listened to, exhibitions visited '
-      + '— newest first. Filter by category, action, occurred-date window, or tag. Category '
-      + 'and action accept singular or plural words.',
+      + '— newest first. Filter by category, action, title/note text, occurred-date window, or tag. '
+      + 'Use the same category and action keys returned by record_experience.',
     parameters: {
-      category: { type: 'string', description: 'Object category, e.g. movie, book, album, exhibition.' },
-      action: { type: 'string', description: 'What was done, e.g. watched, read, listened, visited.' },
+      category: { type: 'string', description: 'Stored category key, e.g. movie, book, album, exhibition.' },
+      action: { type: 'string', description: 'Stored action key, e.g. watched, read, listened, visited.' },
+      text: { type: 'string', description: 'Case-insensitive substring of the title or note.' },
       ...windowParameters,
       tag: { type: 'string', description: 'Exact tag match, case-insensitive.' },
       limit: limitParameter,
@@ -238,7 +239,7 @@ export function createQueryTools(service: PersonalService): ToolDefinition[] {
   const searchPersonalData = defineTool({
     name: 'search_personal_data',
     description:
-      'Substring-search across every personal object type — movies, projects, project logs, '
+      'Substring-search across every personal object type — experiences, projects, project logs, '
       + 'tasks, blog posts, websites, ideas, daily logs — inside an optional date window. '
       + 'Use it when the question spans types or no dedicated query tool fits.',
     parameters: {

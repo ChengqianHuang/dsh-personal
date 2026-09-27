@@ -10,7 +10,7 @@ import {
 } from '../src/store/schema.ts'
 import { BlogPostStore } from '../src/store/blogs.ts'
 import { DailyLogStore, IdeaStore } from '../src/store/ideas.ts'
-import { ExperienceStore, categoryQueryVariants } from '../src/store/experiences.ts'
+import { ExperienceStore } from '../src/store/experiences.ts'
 import { ProjectLogStore, ProjectStore } from '../src/store/projects.ts'
 import { RelationStore } from '../src/store/relations.ts'
 import { TaskStore } from '../src/store/tasks.ts'
@@ -127,13 +127,37 @@ describe('stores', () => {
       expect(september.map(row => row.id)).toEqual(['exp_1'])
       expect(september[0]!.tags).toEqual([' horror '])
       expect(stores.experiences.list({ tag: 'SLOW' }).map(row => row.id)).toEqual(['exp_2'])
-      // Plural query words match singular writes; case differences match too.
-      expect(stores.experiences.list({ category: 'movies' }).map(row => row.id)).toEqual(['exp_1'])
-      expect(stores.experiences.list({ category: 'BOOK', action: 'reads' }).map(row => row.id)).toEqual(['exp_2'])
+      expect(stores.experiences.list({ category: ' MOVIE ' }).map(row => row.id)).toEqual(['exp_1'])
+      expect(stores.experiences.list({ category: 'BOOK', action: 'READ' }).map(row => row.id)).toEqual(['exp_2'])
+      expect(stores.experiences.list({ category: 'book', text: 'nice' }).map(row => row.id)).toEqual(['exp_2'])
+      expect(stores.experiences.list({ category: 'book', text: '%', limit: 20 })).toEqual([])
       expect(stores.experiences.searchText('quiet', {}, 20)).toHaveLength(1)
       expect(stores.experiences.searchText('%', {}, 20)).toHaveLength(0)
-      expect(categoryQueryVariants('movies')).toEqual(['movies', 'movie'])
-      expect(categoryQueryVariants('series')).toEqual(['series', 'serie'])
+      // Open keys use exact normalized identity; plural guesses are not safe.
+      expect(stores.experiences.list({ category: 'books' })).toEqual([])
+    } finally {
+      close()
+    }
+  })
+
+  it('rejects blank experience identity fields at the database constraint', async () => {
+    const { path, close } = await tempDb()
+    try {
+      const db = await openPersonalDatabase(path)
+      try {
+        const insert = db.prepare(
+          'INSERT INTO experiences (id, category, action, title, occurred_on, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        for (const [id, category, action, title] of [
+          ['blank-category', ' ', 'read', 'Book'],
+          ['blank-action', 'book', ' ', 'Book'],
+          ['blank-title', 'book', 'read', ' '],
+        ]) {
+          expect(() => insert.run(id, category, action, title, '2026-09-26', '2026-09-26T00:00:00.000Z')).toThrow()
+        }
+      } finally {
+        db.close()
+      }
     } finally {
       close()
     }
@@ -281,8 +305,8 @@ describe('stores', () => {
     const path = join(root, 'personal.db')
     const { DatabaseSync } = await import('node:sqlite')
     const foreign = new DatabaseSync(path)
-    // Ours by fingerprint, but at version 0 with a table migration 3 creates:
-    // the gate passes, migration 3 fails, and the transaction must roll back
+    // Ours by fingerprint, but at version 0 with a table bootstrap 4 creates:
+    // the gate passes, bootstrap 4 fails, and the transaction must roll back
     // leaving version 0 stamped.
     foreign.exec(`PRAGMA application_id = ${PERSONAL_APPLICATION_ID}`)
     foreign.exec('CREATE TABLE experiences (id TEXT PRIMARY KEY) STRICT')
@@ -320,6 +344,21 @@ describe('stores', () => {
     db.close()
     expect(version.user_version).toBe(2)
     expect(tables).toEqual([{ name: 'movies' }])
+  })
+
+  it('rejects the previous experiences schema without changing its file', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-personal-store-v3-'))
+    const path = join(root, 'personal.db')
+    const { DatabaseSync } = await import('node:sqlite')
+    const old = new DatabaseSync(path)
+    old.exec(`PRAGMA application_id = ${PERSONAL_APPLICATION_ID}`)
+    old.exec('PRAGMA user_version = 3')
+    old.exec('CREATE TABLE experiences (id TEXT PRIMARY KEY) STRICT')
+    old.close()
+    await expect(openPersonalDatabase(path)).rejects.toThrow('schema version 3')
+    const db = new DatabaseSync(path)
+    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 })
+    db.close()
   })
 
   it('opens in-memory databases for tooling', async () => {

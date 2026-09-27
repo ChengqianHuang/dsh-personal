@@ -190,9 +190,9 @@ export class PersonalService extends Service {
   }
 
   /**
-   * Record one watched movie.
-   * @param input - capture payload; `watchedAt` defaults to today.
-   * @returns the stored movie row.
+   * Record one completed experience.
+   * @param input - capture payload; `occurredOn` defaults to today.
+   * @returns the stored experience row.
    */
   async recordExperience(input: RecordExperienceInput): Promise<ExperienceRow> {
     const { experiences } = await this.ready()
@@ -203,8 +203,8 @@ export class PersonalService extends Service {
     }
     experiences.insert({
       id,
-      category: input.category,
-      action: input.action,
+      category: this.required(input.category, 'experience category'),
+      action: this.required(input.action, 'experience action'),
       title: this.required(input.title, 'experience title'),
       occurredOn,
       rating: input.rating === undefined ? null : normalizeRating(input.rating),
@@ -283,16 +283,15 @@ export class PersonalService extends Service {
 
   /**
    * Record one dated project log, creating the named project on demand. The
-   * log links its project through both the foreign key and a `belongs-to`
-   * relation.
+   * log references its project through a foreign key.
    * @param input - capture payload; `date` defaults to today.
-   * @returns the project (created or existing) and the stored log row.
+   * @returns the stored log, its project, and whether this call created it.
    */
-  async recordProjectLog(input: RecordProjectLogInput): Promise<{ project: ProjectRow; log: ProjectLogRow }> {
+  async recordProjectLog(input: RecordProjectLogInput): Promise<{ project: ProjectRow; log: ProjectLogRow; projectCreated: boolean }> {
     const bundle = await this.ready()
     return withTransaction(bundle.db, () => {
-      const project = this.findProjectIn(bundle, input.project)
-        ?? this.createProjectIn(bundle, { name: input.project })
+      const existing = this.findProjectIn(bundle, input.project)
+      const project = existing ?? this.createProjectIn(bundle, { name: input.project })
       const id = mintId('plog') as ProjectLogId
       bundle.projectLogs.insert({
         id,
@@ -305,7 +304,11 @@ export class PersonalService extends Service {
         createdAt: nowIso(),
       })
       bundle.projects.touch(project.id)
-      return { project, log: requireRow(bundle.projectLogs.get(id), 'dsh-personal: project log insert lost') }
+      return {
+        project,
+        log: requireRow(bundle.projectLogs.get(id), 'dsh-personal: project log insert lost'),
+        projectCreated: existing === undefined,
+      }
     })
   }
 
@@ -541,13 +544,17 @@ export class PersonalService extends Service {
   }
 
   /**
- * Query experiences by category, action, occurred-date window, and tag.
- * Category and action accept singular or plural query words.
+ * Query experiences by canonical category, action, date, text, and tag.
  * @param filter - query filter.
  * @returns the matching rows.
  */
   async queryExperiences(filter: ExperienceFilter): Promise<ExperienceRow[]> {
-    return (await this.ready()).experiences.list(filter)
+    return (await this.ready()).experiences.list({
+      ...filter,
+      ...(filter.category === undefined ? {} : { category: this.required(filter.category, 'experience category') }),
+      ...(filter.action === undefined ? {} : { action: this.required(filter.action, 'experience action') }),
+      ...(filter.text === undefined ? {} : { text: this.required(filter.text, 'experience text') }),
+    })
   }
 
   /**
@@ -707,4 +714,3 @@ function requireRow<T>(row: T | undefined, message: string): T {
   if (row === undefined) throw new Error(message)
   return row
 }
-

@@ -236,10 +236,11 @@ export function textBlock(text: string): Array<{ type: 'text'; text: string }> {
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderExperience(row: Pick<ExperienceRow, 'action' | 'title' | 'rating' | 'tags'>): string {
+export function renderExperience(row: Pick<ExperienceRow, 'category' | 'action' | 'title' | 'occurredOn' | 'rating' | 'note' | 'tags'>): string {
   const rating = row.rating === null ? '' : ` ${row.rating}/10`
+  const note = row.note.length > 0 ? ` — ${row.note}` : ''
   const tags = row.tags.length > 0 ? ` [${row.tags.join(', ')}]` : ''
-  return `${row.action} ${row.title}${rating}${tags}`
+  return `${row.occurredOn} [${row.category}] ${row.action} ${row.title}${rating}${note}${tags}`
 }
 
 /**

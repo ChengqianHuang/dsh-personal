@@ -1,7 +1,7 @@
 /**
  * SQLite store for experiences: anything the user already did — watched a
  * movie, read a book, listened to an album, visited an exhibition. Categories
- * and actions are open vocabulary (normalized at write, expanded at query),
+ * and actions are open vocabulary (normalized at write and query),
  * so a new kind of experience needs no store, migration, or schema change.
  * @module dsh-personal/store/experiences
  */
@@ -59,21 +59,6 @@ export function normalizeCategoryAction(value: string): string {
   return value.trim().toLowerCase().replaceAll(/\s+/g, ' ')
 }
 
-/**
- * Query variants for one category or action word: the normalized term plus
- * its deterministic singular/plural counterpart, so a query for `movies`
- * finds rows written as `movie` (and vice versa) without pretending to parse
- * English — `series` expands to the harmless extra `serie` that never matches.
- * @param value - raw query word.
- * @returns the normalized term and its counterpart, deduplicated.
- */
-export function categoryQueryVariants(value: string): string[] {
-  const base = normalizeCategoryAction(value)
-  if (base.length === 0) return [base]
-  const counterpart = base.endsWith('s') && base.length > 3 ? base.slice(0, -1) : `${base}s`
-  return base === counterpart ? [base] : [base, counterpart]
-}
-
 /** Durable experience store. */
 export class ExperienceStore {
   private readonly sql: StatementCache
@@ -129,9 +114,8 @@ export class ExperienceStore {
   }
 
   /**
-   * List experiences by category, action, occurred-date window, and tag,
-   * newest experience first. Category and action accept singular or plural
-   * query words (see {@link categoryQueryVariants}).
+   * List experiences by canonical category, action, occurred-date window,
+   * text, and tag, newest experience first.
    * @param filter - query filter.
    * @returns matching rows.
    */
@@ -141,16 +125,17 @@ export class ExperienceStore {
     const parts: Array<{ clauses: string[]; params: SupportedValue[] }> = []
     if (filter.category !== undefined) {
       parts.push({
-        clauses: [`category IN (${categoryQueryVariants(filter.category).map(() => '?').join(', ')})`],
-        params: categoryQueryVariants(filter.category),
+        clauses: ['category = ?'],
+        params: [normalizeCategoryAction(filter.category)],
       })
     }
     if (filter.action !== undefined) {
       parts.push({
-        clauses: [`action IN (${categoryQueryVariants(filter.action).map(() => '?').join(', ')})`],
-        params: categoryQueryVariants(filter.action),
+        clauses: ['action = ?'],
+        params: [normalizeCategoryAction(filter.action)],
       })
     }
+    if (filter.text !== undefined) parts.push(experienceTextClause(filter.text))
     const { where, params } = whereClause([
       ...parts,
       windowClauses('occurred_on', 'date', win),
@@ -171,15 +156,23 @@ export class ExperienceStore {
    * @returns matching rows, newest experience first.
    */
   searchText(text: string, win: { from?: string; to?: string }, limit: number): ExperienceRow[] {
-    const pattern = containsPattern(text)
     const { where, params } = whereClause([
       windowClauses('occurred_on', 'date', win),
-      { clauses: ['(title LIKE ? ESCAPE \'\\\' OR note LIKE ? ESCAPE \'\\\')'], params: [pattern, pattern] },
+      experienceTextClause(text),
     ])
     const raws = this.sql.all<ExperienceDbRow>(
       `SELECT * FROM experiences ${where} ORDER BY occurred_on DESC, id DESC LIMIT ?`,
       ...params, limit,
     )
     return raws.map(row => ExperienceStore.toRow(row))
+  }
+}
+
+/** Search the two free-text experience fields without treating caller text as SQL. */
+function experienceTextClause(text: string): { clauses: string[]; params: SupportedValue[] } {
+  const pattern = containsPattern(text)
+  return {
+    clauses: ['(title LIKE ? ESCAPE \'\\\' OR note LIKE ? ESCAPE \'\\\')'],
+    params: [pattern, pattern],
   }
 }

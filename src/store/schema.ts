@@ -1,25 +1,20 @@
 /**
- * SQLite schema for the personal plugin: the ordered migration list and the
- * monotonic migration runner. `PRAGMA user_version` is the schema version;
- * every migration applies once inside a transaction that also stamps its
- * version, so an interrupted migration leaves the previous version intact.
+ * SQLite schema for the personal plugin. `PRAGMA user_version` identifies the
+ * format; a fresh database receives the current schema in one transaction.
  * @module dsh-personal/store/schema
  */
 
 import type { DatabaseSync } from 'node:sqlite'
 
 /**
- * Current personal schema version. Bump by appending a migration; any on-disk
+ * Current personal schema version. Bump when changing the schema; any on-disk
  * version that is not `0` (fresh) or the current version is rejected —
  * intermediate versions carry no automatic data migration.
  *
- * 1–2 — earlier movie-centric schemas; databases stamped with them are
- *       rejected at open with rebuild instructions (the experiences model
- *       intentionally does not migrate the old `movies` table).
- * 3   — the experiences model: `movies` is replaced by an open
- *       `experiences` table (category × action), relation types updated.
+ * 1–3 — retired schemas; databases stamped with them are rejected at open.
+ * 4   — experiences require a non-empty category, action, and title.
  */
-export const PERSONAL_SCHEMA_VERSION = 3
+export const PERSONAL_SCHEMA_VERSION = 4
 
 /**
  * SQLite `application_id` fingerprint (`PERS`) marking a database as owned by
@@ -27,18 +22,18 @@ export const PERSONAL_SCHEMA_VERSION = 3
  */
 export const PERSONAL_APPLICATION_ID = 0x50455253
 
-/** One forward-only schema migration. */
+/** One schema creation or migration step. */
 export interface PersonalMigration {
-  /** Version this migration produces; versions are dense and increasing. */
+  /** Version this step produces. */
   readonly version: number
   /** Apply the migration's DDL and DML inside the caller's transaction. */
   readonly up: (db: DatabaseSync) => void
 }
 
-/** Ordered migration list; every version above the on-disk version applies. */
+/** Current bootstrap step; older on-disk schemas are rejected. */
 export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
   {
-    version: 3,
+    version: 4,
     up(db) {
       db.exec(`
         CREATE TABLE projects (
@@ -66,9 +61,9 @@ export const PERSONAL_MIGRATIONS: readonly PersonalMigration[] = [
       db.exec(`
         CREATE TABLE experiences (
           id          TEXT PRIMARY KEY,
-          category    TEXT NOT NULL,
-          action      TEXT NOT NULL,
-          title       TEXT NOT NULL,
+          category    TEXT NOT NULL CHECK (length(trim(category)) > 0),
+          action      TEXT NOT NULL CHECK (length(trim(action)) > 0),
+          title       TEXT NOT NULL CHECK (length(trim(title)) > 0),
           occurred_on TEXT NOT NULL,
           rating      REAL CHECK (rating IS NULL OR (rating >= 0 AND rating <= 10)),
           note        TEXT NOT NULL DEFAULT '',
@@ -173,7 +168,7 @@ export class SchemaVersionError extends Error {
         ? `dsh-personal: database at "${path}" has schema version ${onDisk}, newer than this build (${current}); ` +
           'upgrade the plugin build and reopen.'
         : `dsh-personal: database at "${path}" uses schema version ${onDisk}, created by an older build; ` +
-          `this build requires version ${current} (the experiences model has no data migration from older schemas). ` +
+          `this build requires version ${current} and does not migrate older schemas. ` +
           `Move or delete the database file and restart to create a fresh one.`,
     )
     this.name = 'SchemaVersionError'
@@ -181,10 +176,8 @@ export class SchemaVersionError extends Error {
 }
 
 /**
- * Bring an opened personal database to the current schema version by applying
- * every pending migration in order. Each migration runs in one transaction
- * that also stamps its own version, so a failure rolls back to the previous
- * version and the next open retries the same migration.
+ * Initialize a fresh database in one transaction, or accept the current
+ * version. A failed bootstrap rolls back so the next open can retry.
  *
  * Databases stamped with a retired version (below the oldest migration in the
  * list) are rejected with rebuild instructions instead of being silently
