@@ -26,7 +26,7 @@ dsh (未修改)
         │     └── search.ts  连接内存 FTS5 索引 + Jieba 分词 + BM25 排序
         ├── dates.ts  时区感知日历（ISO 校验 / 周·月窗 / due_in 分桶 / 周末=周六截止）
         ├── review.ts 确定性事实组装（daily / weekly）
-        └── tools/    19 个薄适配器（11 capture + 6 query + 2 review）
+        └── tools/    22 个薄适配器（11 capture + 6 query + 3 record + 2 review）
 ```
 
 ## 关键决策
@@ -42,6 +42,8 @@ dsh (未修改)
 9. **record_project_log 的 `projectCreated` 由写入事务确定**，并发调用不会把已有项目误报为新建。
 10. **检索索引可重建**：FTS5 TEMP 表不写入个人数据库；TEMP trigger 与本连接写入一同提交或回滚。`data_version` 检测外部提交，搜索在主库读取快照内同步索引并取结果。设计取舍见 [Agent Note](.agents/notes/implemented/architecture/2026-09-28-derived-search-index.md)。
 11. **跨类型统一排序**：`search_personal_data` 返回 `terms` 和全局 `hits`，BM25 权重由配置解析；默认标题 5、标签 3、正文 1，`limit` 是所有类型的总上限。`all` 要求全部分词，`any` 明确扩大到部分命中，不能把分组结果当作全局排序。
+
+12. **纠错按精确 id 与内容指纹执行**：工具先读完整记录，在同步写事务内核对 `expected_revision`；字段白名单只允许领域字段，删除阻止持久引用且只清理显式关系，不级联删除。目标歧义由模型向用户询问，存储层不把搜索排名当作目标选择。设计取舍见 [Agent Note](.agents/notes/implemented/architecture/2026-09-28-record-editing.md)。
 
 ## 已知限制
 

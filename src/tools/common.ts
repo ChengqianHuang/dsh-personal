@@ -236,11 +236,11 @@ export function textBlock(text: string): Array<{ type: 'text'; text: string }> {
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderExperience(row: Pick<ExperienceRow, 'category' | 'action' | 'title' | 'occurredOn' | 'rating' | 'note' | 'tags'>): string {
+export function renderExperience(row: Pick<ExperienceRow, 'category' | 'action' | 'title' | 'occurredOn' | 'rating' | 'note' | 'tags'> & { id?: string }): string {
   const rating = row.rating === null ? '' : ` ${row.rating}/10`
   const note = row.note.length > 0 ? ` — ${row.note}` : ''
   const tags = row.tags.length > 0 ? ` [${row.tags.join(', ')}]` : ''
-  return `${row.occurredOn} [${row.category}] ${row.action} ${row.title}${rating}${note}${tags}`
+  return `${row.occurredOn} [${row.category}] ${row.action} ${row.title}${rating}${note}${tags}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -248,8 +248,8 @@ export function renderExperience(row: Pick<ExperienceRow, 'category' | 'action' 
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderProject(row: Pick<ProjectRow, 'name' | 'status'>): string {
-  return `${row.name} (${row.status})`
+export function renderProject(row: Pick<ProjectRow, 'name' | 'status'> & { id?: string }): string {
+  return `${row.name} (${row.status})${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -257,8 +257,8 @@ export function renderProject(row: Pick<ProjectRow, 'name' | 'status'>): string 
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderProjectLog(row: Pick<ProjectLogRow, 'date' | 'status' | 'title'>): string {
-  return `${row.date} ${row.status} ${row.title}`
+export function renderProjectLog(row: Pick<ProjectLogRow, 'date' | 'status' | 'title'> & { id?: string }): string {
+  return `${row.date} ${row.status} ${row.title}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -266,10 +266,10 @@ export function renderProjectLog(row: Pick<ProjectLogRow, 'date' | 'status' | 't
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderTask(row: Pick<TaskRow, 'status' | 'priority' | 'title' | 'dueAt' | 'doneAt'>): string {
+export function renderTask(row: Pick<TaskRow, 'status' | 'priority' | 'title' | 'dueAt' | 'doneAt'> & { id?: string }): string {
   const due = row.dueAt === null ? '' : ` due ${row.dueAt}`
   const done = row.doneAt === null ? '' : ` done ${row.doneAt}`
-  return `${row.status} [${row.priority}] ${row.title}${due}${done}`
+  return `${row.status} [${row.priority}] ${row.title}${due}${done}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -277,8 +277,8 @@ export function renderTask(row: Pick<TaskRow, 'status' | 'priority' | 'title' | 
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderBlogPost(row: Pick<BlogPostRow, 'status' | 'title'>): string {
-  return `${row.status} ${row.title}`
+export function renderBlogPost(row: Pick<BlogPostRow, 'status' | 'title'> & { id?: string }): string {
+  return `${row.status} ${row.title}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -286,8 +286,8 @@ export function renderBlogPost(row: Pick<BlogPostRow, 'status' | 'title'>): stri
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderWebsite(row: Pick<WebsiteRow, 'name' | 'domain'>): string {
-  return `${row.name} (${row.domain})`
+export function renderWebsite(row: Pick<WebsiteRow, 'name' | 'domain'> & { id?: string }): string {
+  return `${row.name} (${row.domain})${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -295,9 +295,9 @@ export function renderWebsite(row: Pick<WebsiteRow, 'name' | 'domain'>): string 
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderIdea(row: Pick<IdeaRow, 'title' | 'category'>): string {
+export function renderIdea(row: Pick<IdeaRow, 'title' | 'category'> & { id?: string }): string {
   const category = row.category === '' ? '' : ` [${row.category}]`
-  return `${row.title}${category}`
+  return `${row.title}${category}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**
@@ -305,8 +305,8 @@ export function renderIdea(row: Pick<IdeaRow, 'title' | 'category'>): string {
  * @param row - the row fields the renderer prints.
  * @returns the one-line text.
  */
-export function renderDailyLog(row: Pick<DailyLogRow, 'date' | 'summary'>): string {
-  return `${row.date} ${row.summary}`
+export function renderDailyLog(row: Pick<DailyLogRow, 'date' | 'summary'> & { id?: string }): string {
+  return `${row.date} ${row.summary}${row.id === undefined ? '' : ` [id=${row.id}]`}`
 }
 
 /**

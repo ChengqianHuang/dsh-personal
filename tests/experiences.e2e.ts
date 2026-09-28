@@ -175,6 +175,71 @@ describe.skipIf(route === undefined || !existsSync(join(HOME, '.credentials.yaml
     }
   }, 900_000)
 
+  it('clarifies an ambiguous edit, corrects one exact experience, links an idea and persists deletion', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'dsh-personal-edit-e2e-'))
+    try {
+      const dbPath = join(parent, 'personal.db')
+      const db = await openPersonalDatabase(dbPath)
+      try {
+        db.exec("INSERT INTO experiences (id, category, action, title, occurred_on, rating, note, created_at) VALUES ('exp_first', 'movie', 'watched', '重复电影', '2026-09-01', 6, '第一次看', '2026-09-01T00:00:00.000Z'), ('exp_second', 'movie', 'watched', '重复电影', '2026-09-02', 7.5, '第二次看', '2026-09-02T00:00:00.000Z')")
+        db.exec("INSERT INTO projects (id, name, status, created_at, updated_at) VALUES ('project_blog', '博客项目', 'ACTIVE', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')")
+        db.exec("INSERT INTO ideas (id, title, created_at) VALUES ('idea_keep', '检索文章构思', '2026-09-01T00:00:00.000Z'), ('idea_delete', '重复的废弃想法', '2026-09-01T00:00:00.000Z')")
+        db.exec("INSERT INTO tasks (id, title, status, priority, created_at, updated_at) VALUES ('task_certificate', '检查博客证书', 'TODO', 'MEDIUM', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')")
+      } finally { db.close() }
+      const ambiguous = await runPersonalSmoke({
+        label: 'ambiguous-edit', dbPath,
+        tasks: ['把《重复电影》的评分改成 8 分。'],
+        inspect: async (cwd) => {
+          const events = await readSessionEvents(cwd)
+          const calls = events.filter(event => event.type === 'tool/call').map(event => (event.data as { name: string }).name)
+          expect(calls).not.toContain('update_personal_record')
+          expect(calls).not.toContain('delete_personal_record')
+          const check = await openPersonalDatabase(dbPath)
+          try { expect(check.prepare('SELECT rating FROM experiences ORDER BY id').all()).toEqual([{ rating: 6 }, { rating: 7.5 }]) } finally { check.close() }
+        },
+      })
+      expect(ambiguous.stdout).toContain('重复电影')
+      await runPersonalSmoke({
+        label: 'edit-records', dbPath,
+        tasks: [
+          '把《重复电影》第二次看的那条（备注为“第二次看”）评分改成 8 分，第一次那条保持原样。',
+          '把“检索文章构思”这个想法关联到“博客项目”。',
+          '“检查博客证书”任务已经完成了，更新记录。',
+          '删除标题为“重复的废弃想法”的那一条想法。',
+        ],
+        inspect: async (cwd) => {
+          const events = await readSessionEvents(cwd)
+          const calls = events.filter(event => event.type === 'tool/call').map(event => (event.data as { name: string }).name)
+          expect(calls).toContain('get_personal_record')
+          expect(calls).toContain('update_personal_record')
+          expect(calls).toContain('delete_personal_record')
+          const check = await openPersonalDatabase(dbPath)
+          try {
+            expect(check.prepare('SELECT id, rating FROM experiences ORDER BY id').all()).toEqual([{ id: 'exp_first', rating: 6 }, { id: 'exp_second', rating: 8 }])
+            expect(check.prepare('SELECT related_project_id FROM ideas WHERE id = ?').get('idea_keep')).toEqual({ related_project_id: 'project_blog' })
+            expect(check.prepare('SELECT * FROM ideas WHERE id = ?').get('idea_delete')).toBeUndefined()
+            expect(check.prepare('SELECT status, done_at FROM tasks WHERE id = ?').get('task_certificate')).toEqual({ status: 'DONE', done_at: todayIso(ZONE) })
+          } finally { check.close() }
+        },
+      })
+      await runPersonalSmoke({
+        label: 'edit-restart', dbPath,
+        tasks: ['查库确认《重复电影》第二次看的评分、“检索文章构思”关联的项目、“检查博客证书”的完成状态，以及是否还有“重复的废弃想法”。'],
+        inspect: async (cwd) => {
+          const events = await readSessionEvents(cwd)
+          const results = JSON.stringify(events.filter(event => event.type === 'tool/result'))
+          expect(results).toContain('重复电影')
+          expect(results).toMatch(/8(?:\/10|,|})/)
+          expect(results).toContain('project_blog')
+          expect(results).toContain('DONE')
+          const mutations = events.filter(event => event.type === 'tool/call').map(event => (event.data as { name: string }).name)
+          expect(mutations).not.toContain('update_personal_record')
+          expect(mutations).not.toContain('delete_personal_record')
+        },
+      })
+    } finally { await rm(parent, { recursive: true, force: true }) }
+  }, 900_000)
+
   /**
    * The capture turns must have written these exact facts: four experience
    * categories through one tool and one table, one planned item as a task,

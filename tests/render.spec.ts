@@ -11,6 +11,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { Context } from '@deepseek-ai/cordis'
 import type { BlogPostId, DailyLogId, ExperienceId, IdeaId, ProjectId, ProjectLogId, TaskId, TaskPriority, TaskStatus, WebsiteId } from '../src/types.ts'
 import { PersonalService } from '../src/index.ts'
+import { createRecordTools } from '../src/tools/records.ts'
 import { createQueryTools } from '../src/tools/query.ts'
 import { createReviewTools } from '../src/tools/review.ts'
 import { createWriteTools } from '../src/tools/write.ts'
@@ -45,10 +46,10 @@ const WRITE_SAMPLES: Record<string, Record<string, unknown>> = {
   create_task: { title: '检查 HTTPS 证书', due_in: 'next-week', priority: 'HIGH' },
   // Second pass: the other conditional-spread paths (exact date + source links).
   create_task_full: { title: '续费域名', due_at: '2026-12-01', project: 'Forge', website: 'blog.example.com', source_type: 'blog_post', source_id: 'blog_1' },
-  update_task: { task_id: 'REPLACED', status: 'DOING' },
-  complete_task: { task_id: 'REPLACED' },
+  update_task: { task_id: 'REPLACED', expected_revision: 'snapshot', status: 'DOING' },
+  complete_task: { task_id: 'REPLACED', expected_revision: 'snapshot' },
   create_blog_post: { title: 'DSH Personal Agent', status: 'IDEA', tags: ['dsh'], related_project: 'Forge' },
-  update_blog_post: { post_id: 'REPLACED', status: 'DRAFT', title: 'v2', summary: 'premise', content: 'body' },
+  update_blog_post: { post_id: 'REPLACED', expected_revision: 'snapshot', status: 'DRAFT', title: 'v2', summary: 'premise', content: 'body' },
   create_idea: { title: '写博客的想法', category: 'writing' },
   record_daily_log: { summary: '平静的一天', raw_text: 'raw words' },
   register_website: { name: 'Blog', domain: 'blog.example.com', tags: ['blog'] },
@@ -117,6 +118,8 @@ describe('tool projections', () => {
     for (const entry of updateEntries) {
       const tool = tools.get(entry.toolName)!
       const args = entry.args ?? {}
+      const ref = (args.task_id ?? args.post_id) as never
+      args.expected_revision = (await service.getRecord(entry.toolName === 'update_blog_post' ? 'blog_post' : 'task', ref)).revision
       const value = await executeJson(tool, args)
       const text = tool.output.render(args, value).filter(block => block.type === 'text').map(block => block.text).join('')
       expect(text.length, entry.name).toBeGreaterThan(0)
@@ -198,10 +201,13 @@ describe('tool projections', () => {
   it('rejects every already-cancelled call before the body runs', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-personal-render-abort-'))
     const service = new PersonalService(new Context(), { databasePath: join(root, 'personal.db'), timezone: 'UTC' })
-    const tools = [...createWriteTools(service), ...createQueryTools(service), ...createReviewTools(service)]
+    const tools = [...createRecordTools(service), ...createWriteTools(service), ...createQueryTools(service), ...createReviewTools(service)]
     const cancelled = { signal: AbortSignal.abort() } as unknown as ToolRunContext
     const argsFor: Record<string, Record<string, unknown>> = {
       ...Object.fromEntries(Object.entries(WRITE_SAMPLES).map(([name, args]) => [name, { ...args }])),
+      get_personal_record: { type: 'experience', id: 'x' },
+      update_personal_record: { type: 'experience', id: 'x', expected_revision: 'r', patch: { rating: 8 } },
+      delete_personal_record: { type: 'experience', id: 'x', expected_revision: 'r' },
       search_personal_data: { text: 'x' },
     }
     for (const tool of tools) {
