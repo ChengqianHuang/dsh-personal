@@ -19,6 +19,10 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { parseRecordPatch } from './record-edit.ts'
+import { RecordStore } from './store/records.ts'
+import type { PersonalRecordId, RecordRevision, RecordSnapshot } from './types.ts'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
 import z from '@deepseek-ai/schemastery'
@@ -85,6 +89,7 @@ interface StoreBundle extends ReviewStores {
   db: DatabaseSync
   experiences: ExperienceStore
   relations: RelationStore
+  records: RecordStore
 }
 
 /** Deterministic personal-domain operations over one SQLite database. */
@@ -159,6 +164,7 @@ export class PersonalService extends Service {
           ideas: new IdeaStore(db),
           dailyLogs: new DailyLogStore(db, this.settings.timeZone),
           relations: new RelationStore(db),
+          records: new RecordStore(db),
         }
         return this.stores
       })
@@ -351,32 +357,24 @@ export class PersonalService extends Service {
    * and any other status clears it.
    * @param id - task id.
    * @param patch - mutable fields; `dueAt` overrides `dueIn` when both are present.
+   * @param revision - content token from getRecord; stale tokens reject.
    * @returns the updated task row.
    * @throws when the id is unknown.
    */
-  async updateTask(id: TaskId, patch: UpdateTaskInput): Promise<TaskRow> {
-    const { tasks } = await this.ready()
-    if (tasks.get(id) === undefined) throw new Error(`dsh-personal: unknown task ${JSON.stringify(id)}`)
-    const dueAt = patch.dueAt !== undefined
-      ? assertIsoDate(patch.dueAt, 'dueAt')
-      : patch.dueIn !== undefined ? resolveDueDate(patch.dueIn, this.settings.timeZone) : undefined
-    const updated = tasks.update(id, {
-      ...(patch.title !== undefined ? { title: this.required(patch.title, 'task title') } : {}),
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-      ...(dueAt !== undefined ? { dueAt } : {}),
-    })
-    return requireRow(updated, 'dsh-personal: task update lost')
+  async updateTask(id: TaskId, patch: UpdateTaskInput, revision: RecordRevision): Promise<TaskRow> {
+    const result = await this.updateRecord('task', id, revision, patch as JsonValue)
+    return result.row as unknown as TaskRow
   }
 
   /**
    * Mark one task done.
    * @param id - task id.
+   * @param revision - content token from getRecord; stale tokens reject.
    * @returns the updated task row.
    * @throws when the id is unknown.
    */
-  async completeTask(id: TaskId): Promise<TaskRow> {
-    return this.updateTask(id, { status: 'DONE' })
+  async completeTask(id: TaskId, revision: RecordRevision): Promise<TaskRow> {
+    return this.updateTask(id, { status: 'DONE' }, revision)
   }
 
   /**
@@ -407,20 +405,13 @@ export class PersonalService extends Service {
    * Update mutable blog-post fields.
    * @param id - post id.
    * @param patch - mutable fields.
+   * @param revision - content token from getRecord; stale tokens reject.
    * @returns the updated row.
    * @throws when the id is unknown.
    */
-  async updateBlogPost(id: BlogPostId, patch: UpdateBlogPostInput): Promise<BlogPostRow> {
-    const { blogPosts } = await this.ready()
-    if (blogPosts.get(id) === undefined) throw new Error(`dsh-personal: unknown blog post ${JSON.stringify(id)}`)
-    const updated = blogPosts.update(id, {
-      ...(patch.title !== undefined ? { title: this.required(patch.title, 'blog title') } : {}),
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.summary !== undefined ? { summary: this.optional(patch.summary) } : {}),
-      ...(patch.content !== undefined ? { content: this.optional(patch.content) } : {}),
-      ...(patch.tags !== undefined ? { tags: this.tagList(patch.tags) } : {}),
-    })
-    return requireRow(updated, 'dsh-personal: blog post update lost')
+  async updateBlogPost(id: BlogPostId, patch: UpdateBlogPostInput, revision: RecordRevision): Promise<BlogPostRow> {
+    const result = await this.updateRecord('blog_post', id, revision, patch as JsonValue)
+    return result.row as unknown as BlogPostRow
   }
 
   /**
@@ -638,6 +629,80 @@ export class PersonalService extends Service {
     return personalSearchIndex(bundle.db).search({
       text, ...win, types: input.types, match: input.match,
       limit: input.limit, weights: this.settings.searchWeights,
+    })
+  }
+
+  /**
+   * Read one record by exact id, including the token required to edit it.
+   * @param type - record kind.
+   * @param id - exact id from a capture or query result.
+   * @returns complete durable row and revision.
+   * @throws when the id is unknown for this kind.
+   */
+  async getRecord(type: PersonalObjectType, id: PersonalRecordId): Promise<RecordSnapshot> {
+    const { records } = await this.ready()
+    const record = records.get(type, id)
+    if (record === undefined) throw new Error(`dsh-personal: unknown ${type} id ${JSON.stringify(id)}`)
+    return record
+  }
+
+  /**
+   * Update only supplied fields after checking the caller's snapshot revision.
+   * Task completion dates and record timestamps are managed by the service.
+   * @param type - record kind.
+   * @param id - exact record id.
+   * @param revision - token from getRecord.
+   * @param patch - untrusted camelCase partial fields; null clears nullable fields.
+   * @returns complete updated row and its new revision.
+   * @throws for stale revisions, invalid patches, references, or uniqueness conflicts.
+   */
+  async updateRecord(type: PersonalObjectType, id: PersonalRecordId, revision: RecordRevision, patch: JsonValue): Promise<RecordSnapshot> {
+    const bundle = await this.ready()
+    return withTransaction(bundle.db, () => {
+      const before = bundle.records.requireCurrent(type, id, revision)
+      const today = this.today()
+      const pairs = parseRecordPatch(type, patch, today,
+        (kind, ref) => bundle.records.get(kind, ref as PersonalRecordId) !== undefined)
+      const status = pairs.find(([column]) => column === 'status')?.[1]
+      if (type === 'task' && status !== undefined) {
+        pairs.push(['done_at', status === 'DONE' ? before.row.status === 'DONE' ? before.row.doneAt as string : today : null])
+      }
+      if (type === 'task' && pairs.some(([column]) => column === 'source_type' || column === 'source_id')) {
+        const value = (column: string, field: string): JsonValue | undefined => {
+          const pair = pairs.find(([key]) => key === column)
+          return pair === undefined ? before.row[field] : pair[1] as JsonValue
+        }
+        if ((value('source_type', 'sourceType') === null) !== (value('source_id', 'sourceId') === null)) {
+          throw new Error('dsh-personal: sourceType and sourceId must both be set or both be null')
+        }
+      }
+      if (['project', 'task', 'blog_post', 'website'].includes(type)) pairs.push(['updated_at', nowIso()])
+      bundle.records.update(type, id, pairs)
+      if (type === 'project_log') {
+        bundle.projects.touch(before.row.projectId as ProjectId)
+        const nextProject = pairs.find(([column]) => column === 'project_id')?.[1]
+        if (typeof nextProject === 'string' && nextProject !== before.row.projectId) bundle.projects.touch(nextProject as ProjectId)
+      }
+      return requireRow(bundle.records.get(type, id), 'dsh-personal: record update lost')
+    })
+  }
+
+  /**
+   * Delete an exact snapshot and its explicit relation links. Durable incoming
+   * references block deletion; no dependent records are cascaded.
+   * @param type - record kind.
+   * @param id - exact record id.
+   * @param revision - token from getRecord.
+   * @returns the deleted snapshot and count of removed relation links.
+   * @throws for missing ids, stale revisions, or referring records.
+   */
+  async deleteRecord(type: PersonalObjectType, id: PersonalRecordId, revision: RecordRevision): Promise<{ deleted: RecordSnapshot; removedRelations: number }> {
+    const bundle = await this.ready()
+    return withTransaction(bundle.db, () => {
+      const deleted = bundle.records.requireCurrent(type, id, revision)
+      const removedRelations = bundle.records.delete(type, id)
+      if (type === 'project_log') bundle.projects.touch(deleted.row.projectId as ProjectId)
+      return { deleted, removedRelations }
     })
   }
 

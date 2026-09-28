@@ -15,6 +15,9 @@ import { openPersonalDatabase } from '../src/store/open.ts'
 import * as Personal from '../src/index.ts'
 
 const TOOL_NAMES = [
+  'get_personal_record',
+  'update_personal_record',
+  'delete_personal_record',
   'record_experience',
   'create_project',
   'record_project_log',
@@ -154,11 +157,42 @@ describe('dsh-personal real Loader composition', () => {
     expect(result.content.filter(block => block.type === 'text').map(block => block.text).join('')).toMatchInlineSnapshot(`
       "Found 2 matches for "证书" (relevance order).
       Keywords: 证书
-      1. idea: 整理笔记
+      1. idea: 整理笔记 [id=idea_fixture]
          Record: {"id":"idea_fixture","title":"整理笔记","content":"证书","category":"","relatedProjectId":null,"createdAt":"2026-09-20T00:00:00.000Z"}
-      2. task: TODO [MEDIUM] 证书
+      2. task: TODO [MEDIUM] 证书 [id=task_fixture]
          Record: {"id":"task_fixture","title":"证书","status":"TODO","priority":"MEDIUM","dueAt":null,"doneAt":null,"projectId":null,"websiteId":null,"sourceType":null,"sourceId":null,"createdAt":"2026-09-20T00:00:00.000Z","updatedAt":"2026-09-20T00:00:00.000Z"}"
     `)
+  }, 30_000)
+
+  it('reads, edits and deletes through registered tools with complete logged text', async () => {
+    const ctx = await boot([])
+    const db = await openPersonalDatabase(join(root!, 'personal.db'))
+    try {
+      db.exec("INSERT INTO experiences (id, category, action, title, occurred_on, rating, created_at) VALUES ('exp_fixture', 'movie', 'watched', '灵媒', '2026-09-01', 7.5, '2026-09-01T00:00:00.000Z')")
+    } finally { db.close() }
+    const call = (name: string, args: Record<string, unknown>) => ctx.tools.execute({
+      signal: new AbortController().signal, callId: 'edit-compose' as never, name, arguments: args,
+    })
+    const text = (value: Awaited<ReturnType<typeof call>>) => value.content.filter(block => block.type === 'text').map(block => block.text).join('')
+    const query = await call('query_experiences', { category: 'movie' })
+    expect(text(query)).toContain('id=exp_fixture')
+    const read = await call('get_personal_record', { type: 'experience', id: 'exp_fixture' })
+    expect(read.isError).toBe(false)
+    const snapshot = JSON.parse(text(read)) as { revision: string }
+    const updated = await call('update_personal_record', { type: 'experience', id: 'exp_fixture', expected_revision: snapshot.revision, patch: { rating: 8 } })
+    expect(updated.isError).toBe(false)
+    expect(text(updated)).toMatchInlineSnapshot(`"Updated personal record: {"type":"experience","row":{"id":"exp_fixture","category":"movie","action":"watched","title":"灵媒","occurredOn":"2026-09-01","rating":8,"note":"","tags":[],"createdAt":"2026-09-01T00:00:00.000Z"},"revision":"0701a435af902037da8ab8e49e1875288718e854ef98b9e9f234d38140542db5"}"`)
+    const stale = await call('delete_personal_record', { type: 'experience', id: 'exp_fixture', expected_revision: snapshot.revision })
+    expect(stale.isError).toBe(true)
+    expect(text(stale)).toContain('record changed')
+    const invalid = await call('update_personal_record', { type: 'experience', id: 'exp_fixture', expected_revision: snapshot.revision, patch: {} })
+    expect(invalid.isError).toBe(true)
+    const current = await call('get_personal_record', { type: 'experience', id: 'exp_fixture' })
+    const revision = (JSON.parse(text(current)) as { revision: string }).revision
+    const removed = await call('delete_personal_record', { type: 'experience', id: 'exp_fixture', expected_revision: revision })
+    expect(removed.isError).toBe(false)
+    expect(text(removed)).toMatchInlineSnapshot(`"Deleted personal record: {"deleted":{"type":"experience","row":{"id":"exp_fixture","category":"movie","action":"watched","title":"灵媒","occurredOn":"2026-09-01","rating":8,"note":"","tags":[],"createdAt":"2026-09-01T00:00:00.000Z"},"revision":"0701a435af902037da8ab8e49e1875288718e854ef98b9e9f234d38140542db5"},"removedRelations":0}"`)
+    expect((await call('get_personal_record', { type: 'experience', id: 'exp_fixture' })).isError).toBe(true)
   }, 30_000)
 
   it('fails load on invalid search weights', async () => {

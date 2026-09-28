@@ -1,7 +1,7 @@
 /**
  * Personal domain vocabulary: object types, branded ids, durable row shapes,
  * service input and filter types, and review results. Types only — runtime
- * schema and migration logic live in the store and tools modules.
+ * schema logic lives in the store and tools modules.
  * @module @deepseek-ai/dsh-personal/types
  */
 
@@ -446,4 +446,17 @@ export interface WeeklyReview {
   blogPosts: BlogPostRow[]
   ideas: IdeaRow[]
   websites: ReviewWebsiteTasks[]
+}
+
+/** Exact id of one editable personal record; names are never mutation targets. */
+export type PersonalRecordId = ExperienceId | ProjectId | ProjectLogId | TaskId | BlogPostId | WebsiteId | IdeaId | DailyLogId
+
+/** Content-derived token for comparing a record before a mutation. */
+export type RecordRevision = Branded<'PersonalRecordRevision'>
+
+/** Complete durable row and the revision required for a guarded mutation. */
+export interface RecordSnapshot {
+  type: PersonalObjectType
+  row: Record<string, JsonValue>
+  revision: RecordRevision
 }

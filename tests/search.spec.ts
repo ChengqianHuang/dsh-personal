@@ -114,7 +114,7 @@ describe('keyword retrieval', () => {
     const { service, path } = await fixture()
     const task = await service.createTask({ title: '旧证书' })
     expect(titles(await service.searchPersonal({ text: '旧证书' }))).toEqual(['旧证书'])
-    await service.updateTask(task.id, { title: '域名续费' })
+    await service.updateTask(task.id, { title: '域名续费' }, (await service.getRecord('task', task.id)).revision)
     expect((await service.searchPersonal({ text: '旧证书' })).hits).toEqual([])
     expect(titles(await service.searchPersonal({ text: '域名' }))).toEqual(['域名续费'])
     await service.createTask({ title: '博客证书' })
@@ -140,7 +140,7 @@ describe('keyword retrieval', () => {
     expect((await service.searchPersonal({ text: '证书' })).hits).toHaveLength(1)
     const second = new PersonalService(new Context(), { databasePath: path, timezone: 'UTC' })
     disposers.push(() => { second.close() })
-    await second.updateTask(task.id, { title: '域名续费' })
+    await second.updateTask(task.id, { title: '域名续费' }, (await second.getRecord('task', task.id)).revision)
     expect((await service.searchPersonal({ text: '证书' })).hits).toEqual([])
     expect(titles(await service.searchPersonal({ text: '域名' }))).toEqual(['域名续费'])
     const db = await openPersonalDatabase(path)
@@ -202,7 +202,7 @@ describe('keyword retrieval', () => {
     const index = personalSearchIndex(reader)
     const input = { text: '证书', weights: resolveSearchWeights({}) }
     expect(index.search(input).hits).toHaveLength(1)
-    await service.updateTask(task.id, { title: '域名续费' })
+    await service.updateTask(task.id, { title: '域名续费' }, (await service.getRecord('task', task.id)).revision)
     reader.function('personal_search_tokens', (_value) => { throw new Error('index build interrupted') })
     expect(() => index.search(input)).toThrow('index build interrupted')
     reader.function('personal_search_tokens', value => tokenizeSearch(String(value), true).join(' '))
@@ -225,9 +225,9 @@ describe('keyword retrieval', () => {
     expect(tool.output.render(args, value).filter(block => block.type === 'text').map(block => block.text).join('')).toMatchInlineSnapshot(`
       "Found 2 matches for "博客证书" (relevance order).
       Keywords: 博客, 证书
-      1. task: TODO [MEDIUM] 博客证书
+      1. task: TODO [MEDIUM] 博客证书 [id=task_fixture]
          Record: {"id":"task_fixture","title":"博客证书","status":"TODO","priority":"MEDIUM","dueAt":null,"doneAt":null,"projectId":null,"websiteId":null,"sourceType":null,"sourceId":null,"createdAt":"2026-09-20T00:00:00.000Z","updatedAt":"2026-09-20T00:00:00.000Z"}
-      2. idea: 博客证书续期流程
+      2. idea: 博客证书续期流程 [id=idea_fixture]
          Record: {"id":"idea_fixture","title":"博客证书续期流程","content":"","category":"","relatedProjectId":null,"createdAt":"2026-09-20T00:00:00.000Z"}"
     `)
   })

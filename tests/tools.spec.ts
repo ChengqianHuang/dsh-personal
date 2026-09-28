@@ -10,6 +10,7 @@ import type { ProjectId, ProjectLogId, TaskId } from '../src/types.ts'
 import { createQueryTools } from '../src/tools/query.ts'
 import { createReviewTools } from '../src/tools/review.ts'
 import { renderDailyReview } from '../src/tools/review.ts'
+import { createRecordTools } from '../src/tools/records.ts'
 import { createWriteTools } from '../src/tools/write.ts'
 import { registerPersonalTools } from '../src/tools/index.ts'
 import { Context } from '@deepseek-ai/cordis'
@@ -22,6 +23,9 @@ afterEach(async () => {
 })
 
 const TOOL_NAMES = [
+  'get_personal_record',
+  'update_personal_record',
+  'delete_personal_record',
   'record_experience',
   'create_project',
   'record_project_log',
@@ -47,7 +51,7 @@ async function serviceWithTools(): Promise<{ service: PersonalService; tools: To
   root ??= await mkdtemp(join(tmpdir(), 'dsh-personal-tools-'))
   const databasePath = join(root, 'personal.db')
   const service = new PersonalService(new Context(), { databasePath, timezone: 'UTC' })
-  const tools = [...createWriteTools(service), ...createQueryTools(service), ...createReviewTools(service)]
+  const tools = [...createRecordTools(service), ...createWriteTools(service), ...createQueryTools(service), ...createReviewTools(service)]
   return { service, tools }
 }
 
@@ -69,14 +73,17 @@ describe('tool schemas', () => {
     const { tools } = await serviceWithTools()
     const execCtx = exec()
     const samples: Record<string, Record<string, unknown>> = {
+      get_personal_record: { type: 'experience', id: 'exp_x' },
+      update_personal_record: { type: 'experience', id: 'exp_x', expected_revision: 'snapshot', patch: { rating: 8 } },
+      delete_personal_record: { type: 'experience', id: 'exp_x', expected_revision: 'snapshot' },
       record_experience: { category: 'movie', action: 'watched', title: '灵媒', rating: 7, tags: ['horror'] },
       create_project: { name: 'Forge' },
       record_project_log: { project: 'Forge', title: '定位问题', status: 'DONE' },
       create_task: { title: '检查证书', due_in: 'next-week', website: 'blog.example.com' },
-      update_task: { task_id: 'task_x', status: 'DOING', due_at: '2026-10-01' },
-      complete_task: { task_id: 'task_x' },
+      update_task: { task_id: 'task_x', expected_revision: 'snapshot', status: 'DOING', due_at: '2026-10-01' },
+      complete_task: { task_id: 'task_x', expected_revision: 'snapshot' },
       create_blog_post: { title: 'DSH Personal Agent', status: 'IDEA' },
-      update_blog_post: { post_id: 'blog_x', status: 'DRAFT' },
+      update_blog_post: { post_id: 'blog_x', expected_revision: 'snapshot', status: 'DRAFT' },
       create_idea: { title: 'idea', category: 'product' },
       record_daily_log: { summary: '平静', date: '2026-09-26' },
       register_website: { name: 'Blog', domain: 'blog.example.com' },
@@ -107,6 +114,12 @@ describe('tool schemas', () => {
       ['record_experience', { action: 'watched', title: 'x' }],
       ['record_experience', { title: 'x', rating: 'seven' }],
       ['complete_task', {}],
+      ['complete_task', { task_id: 'task_x' }],
+      ['update_task', { task_id: 'task_x', status: 'DONE' }],
+      ['update_blog_post', { post_id: 'blog_x', status: 'DRAFT' }],
+      ['get_personal_record', { type: 'sql_table', id: 'x' }],
+      ['update_personal_record', { type: 'experience', id: 'x', patch: { rating: 8 } }],
+      ['delete_personal_record', { type: 'experience', id: 'x' }],
       ['create_task', { title: 'x', due_in: 'someday' }],
       ['search_personal_data', { types: ['sql_table'] }],
     ]
@@ -132,7 +145,8 @@ describe('tool execution', () => {
 
     const task = await call('create_task', { title: '检查证书', due_in: 'next-week' })
     const taskId = (task.task as { id: string }).id
-    const completed = await call('complete_task', { task_id: taskId })
+    const snapshot = await call('get_personal_record', { type: 'task', id: taskId })
+    const completed = await call('complete_task', { task_id: taskId, expected_revision: snapshot.revision })
     expect((completed.task as { status: string }).status).toBe('DONE')
 
     const website = await call('register_website', { name: 'Blog', domain: 'blog.example.com' })
@@ -149,7 +163,8 @@ describe('tool execution', () => {
     const review = await call('generate_daily_review', {})
     expect(review).toHaveProperty('date')
 
-    const update = await call('update_task', { task_id: taskId, status: 'DOING' })
+    const latest = await call('get_personal_record', { type: 'task', id: taskId })
+    const update = await call('update_task', { task_id: taskId, expected_revision: latest.revision, status: 'DOING' })
     expect((update.task as { status: string }).status).toBe('DOING')
 
     expect(websiteId).toBeTruthy()
@@ -211,7 +226,7 @@ describe('review rendering', () => {
 })
 
 describe('tool registration gating', () => {
-  it('registers all nineteen tools by default and honors the review toggles', async () => {
+  it('registers all twenty-two tools by default and honors the review toggles', async () => {
     root ??= await mkdtemp(join(tmpdir(), 'dsh-personal-gating-'))
     const databasePath = join(root, 'a.db')
     const service = new PersonalService(new Context(), { databasePath, timezone: 'UTC' })
@@ -220,8 +235,8 @@ describe('tool registration gating', () => {
     registerPersonalTools(ctxStub, service, {
       databasePath, enableDailyReview: true, enableWeeklyReview: true, timeZone: 'UTC',
     })
-    expect(registered).toEqual(TOOL_NAMES)
-    expect(registered).toHaveLength(19)
+    expect(registered.sort()).toEqual([...TOOL_NAMES].sort())
+    expect(registered).toHaveLength(22)
 
     const gated: string[] = []
     registerPersonalTools({ tools: { register: (tool: ToolDefinition) => { gated.push(tool.name) } } } as unknown as Context, service, {

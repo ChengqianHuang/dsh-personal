@@ -7,6 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { PersonalSettings } from '../config.ts'
 import type { PersonalService } from '../index.ts'
+import { createRecordTools } from './records.ts'
 import { createQueryTools } from './query.ts'
 import { createReviewTools } from './review.ts'
 import { createWriteTools } from './write.ts'
@@ -21,6 +22,7 @@ import { createWriteTools } from './write.ts'
 export function registerPersonalTools(ctx: Context, service: PersonalService, settings: PersonalSettings): void {
   const tools = [
     ...createWriteTools(service),
+    ...createRecordTools(service),
     ...createQueryTools(service),
     ...settings.enableDailyReview || settings.enableWeeklyReview ? createReviewTools(service) : [],
   ]

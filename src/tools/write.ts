@@ -10,7 +10,9 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { PersonalService } from '../index.ts'
-import type { BlogPostId, TaskId } from '../types.ts'
+import { revisionParameter } from './records.ts'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { BlogPostRow, TaskRow, RecordRevision, PersonalRecordId } from '../types.ts'
 import {
   BLOG_POST_STATUSES,
   DUE_IN_VALUES,
@@ -207,9 +209,11 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     name: 'update_task',
     description:
       'Update a task by id: rename, change status (TODO, DOING, DONE, CANCELLED), priority, '
-      + 'or due date. Entering DONE stamps the completion date automatically.',
+      + 'or due date. Read get_personal_record first and copy its revision. Ask the user if the target is ambiguous. '
+      + 'On a stale revision read again and reconsider the edit. Entering DONE stamps the completion date automatically.',
     parameters: {
-      task_id: { type: 'string', required: true, description: 'Task id from create_task or query_tasks.' },
+      task_id: { type: 'string', required: true, description: 'Exact task id selected from records; ask the user if ambiguous.' },
+      expected_revision: revisionParameter,
       title: { type: 'string', description: 'New title.' },
       status: { type: 'string', enum: TASK_STATUSES, description: 'New status.' },
       priority: { type: 'string', enum: TASK_PRIORITIES, description: 'New priority.' },
@@ -232,23 +236,23 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      const { task_id, due_at, due_in, ...patch } = args
-      return {
-        task: await service.updateTask(brandString<TaskId>(task_id), {
-          ...patch,
-          ...(due_at !== undefined ? { dueAt: due_at } : {}),
-          ...(due_in !== undefined ? { dueIn: due_in } : {}),
-        }),
-      }
+      const { task_id, expected_revision, due_at, due_in, ...patch } = args
+      const result = await service.updateRecord('task', brandString<PersonalRecordId>(task_id), brandString<RecordRevision>(expected_revision), {
+        ...patch,
+        ...(due_at !== undefined ? { dueAt: due_at } : {}),
+        ...(due_in !== undefined ? { dueIn: due_in } : {}),
+      })
+      return { task: result.row as unknown as TaskRow }
     },
     presentCall: args => ({ card: 'generic', title: 'Update task', kind: 'other', rawInput: args.task_id }),
   })
 
   const completeTask = defineTool({
     name: 'complete_task',
-    description: 'Mark a task DONE by id; the completion date is stamped automatically.',
+    description: 'Mark a selected task DONE by exact id; read get_personal_record first and copy its revision. Ask the user if ambiguous. On a stale revision read again and reconsider. The completion date is stamped automatically.',
     parameters: {
-      task_id: { type: 'string', required: true, description: 'Task id from create_task or query_tasks.' },
+      task_id: { type: 'string', required: true, description: 'Exact task id selected from records; ask the user if ambiguous.' },
+      expected_revision: revisionParameter,
     },
     output: {
       schema: {
@@ -261,7 +265,8 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      return { task: await service.completeTask(brandString<TaskId>(args.task_id)) }
+      const result = await service.updateRecord('task', brandString<PersonalRecordId>(args.task_id), brandString<RecordRevision>(args.expected_revision), { status: 'DONE' })
+      return { task: result.row as unknown as TaskRow }
     },
     presentCall: args => ({ card: 'generic', title: 'Complete task', kind: 'other', rawInput: args.task_id }),
   })
@@ -303,9 +308,10 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
 
   const updateBlogPost = defineTool({
     name: 'update_blog_post',
-    description: 'Update a blog post by id: title, pipeline stage, summary, content, or tags.',
+    description: 'Update a selected blog post by exact id: title, pipeline stage, summary, content, or tags. Read get_personal_record first and copy its revision; ask the user if ambiguous. On a stale revision read again and reconsider.',
     parameters: {
-      post_id: { type: 'string', required: true, description: 'Post id from create_blog_post or query_blog_posts.' },
+      post_id: { type: 'string', required: true, description: 'Exact blog-post id selected from records.' },
+      expected_revision: revisionParameter,
       title: { type: 'string', description: 'New title.' },
       status: { type: 'string', enum: BLOG_POST_STATUSES, description: 'New pipeline stage.' },
       summary: { type: 'string', description: 'New summary.' },
@@ -323,8 +329,9 @@ export function createWriteTools(service: PersonalService): ToolDefinition[] {
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       throwIfAborted(exec.signal)
-      const { post_id, ...patch } = args
-      return { post: await service.updateBlogPost(brandString<BlogPostId>(post_id), patch) }
+      const { post_id, expected_revision, ...patch } = args
+      const result = await service.updateRecord('blog_post', brandString<PersonalRecordId>(post_id), brandString<RecordRevision>(expected_revision), patch as JsonValue)
+      return { post: result.row as unknown as BlogPostRow }
     },
     presentCall: args => ({ card: 'generic', title: 'Update blog post', kind: 'other', rawInput: args.post_id }),
   })
